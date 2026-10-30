@@ -380,8 +380,13 @@ result (F7), and `rv64ui-p-ma_data` and `rv64mi-p-breakpoint`, which fail on
 both emulators (below). The other two, `rv64si-p-dirty` and
 `rv64si-p-icache-alias`, need Sv39 and reach addresses outside sail's
 memory, which fault in sail but not in the harness (no address-range
-checks, above). Within the model's scope, the one known divergence is
-rounding mode RMM in an instruction that rounds (audit F13, below).
+checks, above). With `mstatus.FS` Off, every F and D instruction, the RV64C
+FP loads and stores and each CSR instruction on `fflags`, `frm` and `fcsr`
+must raise illegal instruction; a scratch program that runs all of them
+agrees with sail. It diverged at its `fle.s`, which ran and set FS to Dirty,
+until FLE.S was given the FS check that the other F and D instructions
+have. Within the model's scope, the one known divergence is rounding mode
+RMM in an instruction that rounds (audit F13, below).
 
 ## Smoke tests
 
