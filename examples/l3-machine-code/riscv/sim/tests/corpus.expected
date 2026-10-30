@@ -1,0 +1,207 @@
+# Expected outcomes of the riscv-tests corpus (rv64*-p-*) on riscv-sim and
+# against sail-riscv; checked by `make corpus` (column riscv-sim) and `make
+# compare-corpus` (column compare), rewritten by `make corpus-update`.
+# Outcomes are those of corpus.py (see its docstring); "-" is not
+# recorded.  Notes are kept by corpus-update; give every expected failure
+# or divergence one.
+#
+# test | riscv-sim | compare | note
+rv64mi-p-breakpoint       | fail: test 2   | agree             | needs Sdtrig (triggers); fails the same way on sail
+rv64mi-p-csr              | pass           | agree
+rv64mi-p-illegal          | pass           | agree
+rv64mi-p-instret_overflow | pass           | agree
+rv64mi-p-ld-misaligned    | pass           | agree
+rv64mi-p-lh-misaligned    | pass           | agree
+rv64mi-p-lw-misaligned    | pass           | agree
+rv64mi-p-ma_addr          | pass           | agree
+rv64mi-p-ma_fetch         | pass           | agree
+rv64mi-p-mcsr             | pass           | agree
+rv64mi-p-pmpaddr          | pass           | agree
+rv64mi-p-sbreak           | pass           | agree
+rv64mi-p-scall            | pass           | agree
+rv64mi-p-sd-misaligned    | pass           | agree
+rv64mi-p-sh-misaligned    | pass           | agree
+rv64mi-p-sw-misaligned    | pass           | agree
+rv64mi-p-zicntr           | pass           | agree
+rv64mzicbo-p-zero         | fail: test 668 | agree             | Zicboz is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64si-p-csr              | pass           | agree
+rv64si-p-dirty            | fail: test 3   | diverge: step 89  | needs Sv39; sail faults on an address outside its memory map, the harness has no range checks
+rv64si-p-icache-alias     | fail: test 2   | diverge: step 115 | needs Sv39; sail faults on an address outside its memory map, the harness has no range checks
+rv64si-p-ma_fetch         | pass           | agree
+rv64si-p-sbreak           | pass           | agree
+rv64si-p-scall            | pass           | agree
+rv64si-p-wfi              | pass           | agree
+rv64ssvnapot-p-napot      | fail: test 1   | diverge: step 142 | needs Sv39 and Svnapot; sail faults on an address outside its memory map, the harness has no range checks
+rv64ua-p-amoadd_d         | pass           | agree
+rv64ua-p-amoadd_w         | pass           | agree
+rv64ua-p-amoand_d         | pass           | agree
+rv64ua-p-amoand_w         | pass           | agree
+rv64ua-p-amomax_d         | pass           | agree
+rv64ua-p-amomax_w         | pass           | agree
+rv64ua-p-amomaxu_d        | pass           | agree
+rv64ua-p-amomaxu_w        | pass           | agree
+rv64ua-p-amomin_d         | pass           | agree
+rv64ua-p-amomin_w         | pass           | agree
+rv64ua-p-amominu_d        | pass           | agree
+rv64ua-p-amominu_w        | pass           | agree
+rv64ua-p-amoor_d          | pass           | agree
+rv64ua-p-amoor_w          | pass           | agree
+rv64ua-p-amoswap_d        | pass           | agree
+rv64ua-p-amoswap_w        | pass           | agree
+rv64ua-p-amoxor_d         | pass           | agree
+rv64ua-p-amoxor_w         | pass           | agree
+rv64ua-p-lrsc             | pass           | agree
+rv64uc-p-rvc              | pass           | agree
+rv64ud-p-fadd             | pass           | agree
+rv64ud-p-fclass           | pass           | agree
+rv64ud-p-fcmp             | pass           | agree
+rv64ud-p-fcvt             | pass           | agree
+rv64ud-p-fcvt_w           | pass           | agree
+rv64ud-p-fdiv             | pass           | agree
+rv64ud-p-fmadd            | pass           | agree
+rv64ud-p-fmin             | pass           | agree
+rv64ud-p-ldst             | pass           | agree
+rv64ud-p-move             | pass           | agree
+rv64ud-p-recoding         | pass           | agree
+rv64ud-p-structural       | pass           | agree
+rv64uf-p-fadd             | pass           | agree
+rv64uf-p-fclass           | pass           | agree
+rv64uf-p-fcmp             | pass           | agree
+rv64uf-p-fcvt             | pass           | agree
+rv64uf-p-fcvt_w           | pass           | agree
+rv64uf-p-fdiv             | pass           | agree
+rv64uf-p-fmadd            | pass           | agree
+rv64uf-p-fmin             | pass           | agree
+rv64uf-p-ldst             | pass           | agree
+rv64uf-p-move             | pass           | agree
+rv64uf-p-recoding         | pass           | agree
+rv64ui-p-add              | pass           | agree
+rv64ui-p-addi             | pass           | agree
+rv64ui-p-addiw            | pass           | agree
+rv64ui-p-addw             | pass           | agree
+rv64ui-p-and              | pass           | agree
+rv64ui-p-andi             | pass           | agree
+rv64ui-p-auipc            | pass           | agree
+rv64ui-p-beq              | pass           | agree
+rv64ui-p-bge              | pass           | agree
+rv64ui-p-bgeu             | pass           | agree
+rv64ui-p-blt              | pass           | agree
+rv64ui-p-bltu             | pass           | agree
+rv64ui-p-bne              | pass           | agree
+rv64ui-p-fence_i          | pass           | agree
+rv64ui-p-jal              | pass           | agree
+rv64ui-p-jalr             | pass           | agree
+rv64ui-p-lb               | pass           | agree
+rv64ui-p-lbu              | pass           | agree
+rv64ui-p-ld               | pass           | agree
+rv64ui-p-ld_st            | pass           | agree
+rv64ui-p-lh               | pass           | agree
+rv64ui-p-lhu              | pass           | agree
+rv64ui-p-lui              | pass           | agree
+rv64ui-p-lw               | pass           | agree
+rv64ui-p-lwu              | pass           | agree
+rv64ui-p-ma_data          | fail: test 668 | agree             | by design: misaligned accesses trap, as in sail
+rv64ui-p-or               | pass           | agree
+rv64ui-p-ori              | pass           | agree
+rv64ui-p-sb               | pass           | agree
+rv64ui-p-sd               | pass           | agree
+rv64ui-p-sh               | pass           | agree
+rv64ui-p-simple           | pass           | agree
+rv64ui-p-sll              | pass           | agree
+rv64ui-p-slli             | pass           | agree
+rv64ui-p-slliw            | pass           | agree
+rv64ui-p-sllw             | pass           | agree
+rv64ui-p-slt              | pass           | agree
+rv64ui-p-slti             | pass           | agree
+rv64ui-p-sltiu            | pass           | agree
+rv64ui-p-sltu             | pass           | agree
+rv64ui-p-sra              | pass           | agree
+rv64ui-p-srai             | pass           | agree
+rv64ui-p-sraiw            | pass           | agree
+rv64ui-p-sraw             | pass           | agree
+rv64ui-p-srl              | pass           | agree
+rv64ui-p-srli             | pass           | agree
+rv64ui-p-srliw            | pass           | agree
+rv64ui-p-srlw             | pass           | agree
+rv64ui-p-st_ld            | pass           | agree
+rv64ui-p-sub              | pass           | agree
+rv64ui-p-subw             | pass           | agree
+rv64ui-p-sw               | pass           | agree
+rv64ui-p-xor              | pass           | agree
+rv64ui-p-xori             | pass           | agree
+rv64um-p-div              | pass           | agree
+rv64um-p-divu             | pass           | agree
+rv64um-p-divuw            | pass           | agree
+rv64um-p-divw             | pass           | agree
+rv64um-p-mul              | pass           | agree
+rv64um-p-mulh             | pass           | agree
+rv64um-p-mulhsu           | pass           | agree
+rv64um-p-mulhu            | pass           | agree
+rv64um-p-mulw             | pass           | agree
+rv64um-p-rem              | pass           | agree
+rv64um-p-remu             | pass           | agree
+rv64um-p-remuw            | pass           | agree
+rv64um-p-remw             | pass           | agree
+rv64uzba-p-add_uw         | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh1add         | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh1add_uw      | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh2add         | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh2add_uw      | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh3add         | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh3add_uw      | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-slli_uw        | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-andn           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-clz            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-clzw           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-cpop           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-cpopw          | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-ctz            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-ctzw           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-max            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-maxu           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-min            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-minu           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-orc_b          | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-orn            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rev8           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rol            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rolw           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-ror            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rori           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-roriw          | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rorw           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-sext_b         | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-sext_h         | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-xnor           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-zext_h         | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbc-p-clmul          | fail: test 668 | agree             | Zbc is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbc-p-clmulh         | fail: test 668 | agree             | Zbc is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbc-p-clmulr         | fail: test 668 | agree             | Zbc is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkb-p-brev8         | fail: test 669 | agree             | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkb-p-pack          | fail: test 669 | agree             | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkb-p-packh         | fail: test 669 | agree             | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkb-p-packw         | fail: test 669 | agree             | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkx-p-xperm4        | fail: test 669 | agree             | Zbkx is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkx-p-xperm8        | fail: test 669 | agree             | Zbkx is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bclr           | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bclri          | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bext           | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bexti          | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-binv           | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-binvi          | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bset           | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bseti          | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fadd           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fclass         | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fcmp           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fcvt           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fcvt_w         | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fdiv           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fmadd          | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fmin           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-ldst           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-move           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-recoding       | pass           | agree
+rv64uziccid-p-ziccid      | pass           | agree
+rv64uzicond-p-czero_eqz   | fail: test 669 | agree             | Zicond is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzicond-p-czero_nez   | fail: test 669 | agree             | Zicond is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail

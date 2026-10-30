@@ -6,7 +6,9 @@
    Results are also stored in the signature region, which `make test`
    compares with tests/<name>.sig.expected.
 
-   No CSR is touched: the model's privileged architecture is priv 1.7. */
+   Of the smoke tests only fp.S touches a CSR (mstatus.FS); the regression
+   programs fsoff-all.S and fp-*.S (with fpmacros.h) use mstatus, mtvec,
+   mcause, mepc, mtval and fflags/frm. */
 
 #define TESTNUM gp
 

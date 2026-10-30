@@ -19,8 +19,11 @@ Needs Poly/ML (`poly`, `polyc`; tested with 5.9.2), the runtime library of
 and GNU make. The smoke tests also need `riscv64-unknown-elf-gcc`.
 
     make                     # builds ./riscv-sim
-    make test                # builds and checks the smoke tests in tests/
-    make compare             # compare.py against sail-riscv (needs SAIL)
+    make test                # builds and checks the smoke tests and regression programs in tests/
+    make compare             # compare.py against sail-riscv on them (needs SAIL)
+    make corpus              # the riscv-tests corpus on riscv-sim (needs CORPUS)
+    make compare-corpus      # the corpus against sail-riscv (needs CORPUS, SAIL)
+    make corpus-update       # rewrite tests/corpus.expected from both
 
 Make variables:
 
@@ -30,7 +33,10 @@ Make variables:
 | `MODELDIR` | `../model` | where `riscv.sig` and `riscv.sml` are |
 | `POLYC`, `CC` | `polyc`, `cc` | |
 | `RISCV_PREFIX` | `riscv64-unknown-elf-` | for the smoke tests |
-| `SAIL` | `$(HOME)/Documents/riscv-tools/sail-riscv/build/c_emulator/sail_riscv_sim` | for `make compare` |
+| `SAIL` | `$(HOME)/Documents/riscv-tools/sail-riscv/build/c_emulator/sail_riscv_sim` | for `make compare` and `make compare-corpus` |
+| `SAIL_CONFIG` | `$(HOME)/Documents/riscv-tools/rv64gc_mu_pmp.json` | sail `--config-override` for the regression programs and the corpus; empty for sail's built-in configuration |
+| `CORPUS` | `$(HOME)/Documents/riscv-tools/corpus/riscv-tests` | directory of prebuilt riscv-tests ELFs |
+| `CORPUS_FLAGS` | | extra `corpus.py` options, e.g. `--pattern 'rv64ui-p-*'`, `-j 4`, `-v` |
 
 The executable is called `riscv-sim` (not `riscv-sim.poly`, as l3riscv's
 is), after the command it provides.
@@ -382,7 +388,7 @@ both emulators (below). The other two, `rv64si-p-dirty` and
 memory, which fault in sail but not in the harness (no address-range
 checks, above). With `mstatus.FS` Off, every F and D instruction, the RV64C
 FP loads and stores and each CSR instruction on `fflags`, `frm` and `fcsr`
-must raise illegal instruction; a scratch program that runs all of them
+must raise illegal instruction; `tests/fsoff-all.S`, which runs all of them,
 agrees with sail. It diverged at its `fle.s`, which ran and set FS to Dirty,
 until FLE.S was given the FS check that the other F and D instructions
 have. Within the model's scope, the one known divergence is rounding mode
@@ -413,13 +419,104 @@ Initial): both the model and sail reset `mstatus.FS` to Off, which makes FP
 instructions illegal. `build/fp.elf` (for `make test`) and
 `build/fp_fs.elf` (for `make compare`) are therefore built the same way.
 
+## Regression programs
+
+Programs written while fixing the model, kept in `tests/` because each
+found a bug or pins down a known divergence. They use `test.h` like the
+smoke tests (the FP ones through `fpmacros.h`, which also stores and clears
+`fflags` after every case), are built by the Makefile into `build/`, and
+are checked by `make test` (riscv-sim alone) and `make compare` (against
+sail with `SAIL_CONFIG`). The expected signatures are sail's.
+
+| Test | | `make test` | `make compare` |
+|---|---|---|---|
+| `fsoff-all.S` (rv64imafdc) | with `mstatus.FS` Off, every F/D instruction, the RV64C FP loads and stores and every `fflags`/`frm`/`fcsr` access must trap with illegal instruction, `mtval` = the instruction, and change nothing; found the missing FS check of FLE.S | exit 0, `fsoff-all.sig.expected` (79 traps) | agree |
+| `fp-arith.S` (rv64imafdc) | F/D arithmetic, FMA, FMIN/FMAX, FCLASS, compares, with NaN, sNaN, infinity, subnormal and tie inputs in the four non-RMM rounding modes (audit F5–F12) | exit 0, `fp-arith.sig.expected` | agree with `--ignore-csr fcsr` |
+| `fp-conv.S` (rv64imafdc) | every FCVT direction with saturating, boundary and tie inputs, FCVT.S.D/D.S special values, NaN-boxing round trips, `fcsr` reads | exit 0, `fp-conv.sig.expected` | agree with `--ignore-csr fcsr` |
+| `fp-rmm.S` (rv64imafdc) | RMM in the exact conversions FCVT.D.S/D.W/D.WU, which must agree, then `fadd.s` with RMM at label `rmm_fadd` (audit F13, deferred): the model raises illegal instruction, sail rounds | the first trap is illegal instruction at `rmm_fadd`; exit 4 (trap loop at `mtvec` = 0) | the first divergence is the step at `rmm_fadd` |
+| `batch-a.S` (rv64imac) | LR/SC reservation after a failed SC (F3), AMOMIN/MAX[U].W with junk in `rs2<63:32>` (F4), C.ADDIW (F15), DIV/REM/REMU with `rd` aliasing a source, x/0 and MIN/-1 (F20) | exit 0, `batch-a.sig.expected` | agree |
+
+The FP programs set `mstatus.FS` themselves (`ENABLE_FP` in `fpmacros.h`);
+`fsoff-all` relies on its reset value, Off. `fp-arith` and `fp-conv` need
+`--ignore-csr fcsr` for the reason given under compare.py above.
+
+To add a regression program `tests/foo.S`:
+
+1. Write it self-checking with `test.h` (`TEST_START`, `CHECK`, `RESULT`,
+   `TEST_END`, `SIGNATURE(n)`), so that riscv-sim exits 0 on success.
+2. Add `foo` to `FP_REGRESS` in the Makefile if it needs F/D (it is then
+   built with `-march=rv64imafdc_zicsr`), else to `REGRESS` with a build
+   rule of its own like `build/batch-a.elf`.
+3. Add it to the loop in `make test`, and write `tests/foo.sig.expected`
+   from sail: `sail_riscv_sim --config-override $(SAIL_CONFIG)
+   --test-signature tests/foo.sig.expected build/foo.elf`.
+4. Add a `compare.py $(SAIL_FLAGS) build/foo.elf` line to `make compare`
+   (with `--ignore-csr fcsr` if it writes `fflags`, `frm` or `fcsr`). A
+   program with an expected divergence pins it down like `fp-rmm`: a label
+   at the instruction, `--max-divergences 1`, and a check that the first
+   divergent step is at that label.
+5. Add it to the table above.
+
+## The riscv-tests corpus
+
+`corpus.py` runs every `rv64*-p-*` ELF in `CORPUS` (the prebuilt
+[riscv-tests](https://github.com/riscv-software-src/riscv-tests), which
+end through `tohost`) and checks the outcomes against
+`tests/corpus.expected`:
+
+- `make corpus` (`corpus.py run`) runs each test on riscv-sim and prints a
+  table per suite (`rv64ui`, `rv64mi`, ...) of passes and failures, then
+  each failure with its reason: the riscv-tests `TESTNUM` from `tohost`,
+  riscv-sim's exit status and message, an `UNDEFINED` message, and the
+  note from the expected file.
+- `make compare-corpus` (`corpus.py compare`) runs `compare.py
+  --max-divergences 1` on each test, with `--sail-config-override
+  $(SAIL_CONFIG)` and, for `rv64uf`, `rv64ud` and `rv64uzfh`,
+  `--ignore-csr fcsr`; it prints agree or diverge per test, with the first
+  divergence line of each diverging test, and a table per suite.
+
+Both exit 1 on any difference from the expected file, in either
+direction: a regression (an expected pass that fails, or a change of
+failure such as another test number), an unexpected pass (an expected
+failure that passes), a test without an expected outcome, and an expected
+test that the corpus no longer has. Exit status 2 is a tool error (no
+riscv-sim, corpus or sail). `CORPUS_FLAGS=--pattern 'rv64ui-p-*'`
+restricts both to some tests, `-v` lists every outcome of `make corpus`.
+
+`tests/corpus.expected` has one line per test,
+`test | riscv-sim | compare | note`. Outcomes are `pass`, `fail: test N`
+(HTIF exit code N), `exception: MSG` (exit 3, e.g. `UNDEFINED "..."`),
+`trap loop`, `step limit`, `timeout` for riscv-sim, and `agree`,
+`diverge: step N` (the first divergent step), `error` for compare.py.
+After a change of outcome that is intended (a fix, a new extension),
+`make corpus-update` (or `corpus.py run --update`, `corpus.py compare
+--update`) rewrites the outcome columns; it keeps the notes, and every
+expected failure or divergence should have one, so review the diff of the
+file before committing it.
+
+With the default paths and `rv64gc_mu_pmp.json` the corpus has 199
+`rv64*-p-*` tests. riscv-sim passes 132 and sail agrees on 196:
+
+- the 134 `rv64{ui,um,ua,uc,uf,ud,mi,si}` tests behave as described under
+  "Results so far" and "Known not to work yet": 130 pass, 132 agree;
+- the 62 tests of `rv64uzba`, `uzbb`, `uzbc`, `uzbkb`, `uzbkx`, `uzbs`,
+  `uzfh` (but `recoding`, which passes), `uzicond` and `mzicbo` fail with
+  an illegal-instruction trap that riscv-tests reports as code 668 or 669
+  (1337 | `TESTNUM`), because the model has none of these extensions, and
+  agree with sail, which with this configuration has none of them either;
+- `rv64uziccid-p-ziccid` passes and agrees, and `rv64ssvnapot-p-napot`
+  (Sv39 and Svnapot) fails and diverges like the Sv39 tests.
+
 ## Known not to work yet
 
 - **Four riscv-tests.** Of the 134 `rv64{ui,um,ua,uf,ud,uc,mi,si}-p-*`
   tests, 130 pass. The other four fail on sail too: `rv64ui-p-ma_data` by
   design (misaligned accesses trap), `rv64mi-p-breakpoint` because it needs
   Sdtrig, `rv64si-p-dirty` and `rv64si-p-icache-alias` because they need
-  Sv39. riscv-arch-test has not been rerun on this model.
+  Sv39. The other suites of the corpus test extensions that the model does
+  not have (above, "The riscv-tests corpus"); `tests/corpus.expected` lists
+  every expected failure with its reason. riscv-arch-test has not been
+  rerun on this model.
 - **FP programs** need `mstatus.FS` set first (above), on both emulators.
   Rounding mode RMM raises illegal instruction in the model except in the
   exact conversions `fcvt.d.s`, `fcvt.d.w` and `fcvt.d.wu` (audit F13,
@@ -433,7 +530,7 @@ instructions illegal. `build/fp.elf` (for `make test`) and
 
 | File | |
 |---|---|
-| `Makefile` | build, `test`, `compare` |
+| `Makefile` | build, `test`, `compare`, `corpus`, `compare-corpus`, `corpus-update` |
 | `poly_run.sml` | loads `IntInfFix.sml`, the L3 library, `SSEFix.sml`, the model, `lib/Elf`, `sim.sml` under `polyc` |
 | `sim.sml` | the harness (structure `Sim`) |
 | `lib/Elf.sig`, `lib/Elf.sml` | ELF64 reader with symbol table |
@@ -441,7 +538,8 @@ instructions illegal. `build/fp.elf` (for `make test`) and
 | `lib/sse_fp64_shim.c`, `lib/SSEFix.sml` | the floating-point work-around |
 | `lib/IntInfFix.sml` | the `IntInf.~>>` work-around |
 | `compare.py` | trace comparison with sail-riscv |
-| `tests/` | smoke tests, linker script, expected results |
+| `corpus.py` | the riscv-tests corpus on riscv-sim and through `compare.py` |
+| `tests/` | smoke tests, regression programs, linker script, expected results (`*.sig.expected`, `int.trace.expected`, `corpus.expected`) |
 
 The structure of `sim.sml` and `poly_run.sml` follows `src/sml/model.sml` and
 `src/sml/poly_run.sml` of [l3riscv](https://github.com/SRI-CSL/l3riscv)
