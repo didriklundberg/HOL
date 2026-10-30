@@ -1,9 +1,9 @@
 (* Build driver for riscv-sim under Poly/ML (polyc).
 
-   Loads the L3 runtime library, the L3-generated model (../model/riscv.sig
-   and riscv.sml), the ELF reader in lib/ and the harness sim.sml, in that
-   order.  Adapted from l3riscv's src/sml/poly_run.sml (BSD licence, see
-   lib/LICENSE.l3riscv).
+   Loads lib/IntInfFix.sml, the L3 runtime library, the L3-generated model
+   (../model/riscv.sig and riscv.sml), the ELF reader in lib/ and the
+   harness sim.sml, in that order.  Adapted from l3riscv's
+   src/sml/poly_run.sml (BSD licence, see lib/LICENSE.l3riscv).
 
    Environment variables read at build time:
      L3LIBDIR         the L3 lib directory (BitsN.sml, FP64.sml,
@@ -69,6 +69,10 @@ end;
 (* FP64.sml and friends refer to these. *)
 structure Real64           = LargeReal;
 structure PackReal64Little = PackRealLittle;
+
+(* Correct IntInf.~>> for negative bignums (lib/IntInfFix.sml), before
+   anything else uses IntInf. *)
+val () = SimBuild.useFile (OS.Path.concat (SimBuild.here, "lib")) "IntInfFix.sml";
 
 val () =
   List.app (SimBuild.useSigSml SimBuild.l3lib)

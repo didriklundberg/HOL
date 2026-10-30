@@ -34,7 +34,7 @@ RVCC    = $(RISCV_PREFIX)gcc
 RVFLAGS = -nostdlib -nostartfiles -static -T tests/link.ld -I tests
 
 SIM_SOURCES = poly_run.sml sim.sml lib/Elf.sig lib/Elf.sml lib/SSEFix.sml \
-              $(MODELDIR)/riscv.sig $(MODELDIR)/riscv.sml
+              lib/IntInfFix.sml $(MODELDIR)/riscv.sig $(MODELDIR)/riscv.sml
 
 .PHONY: all test compare clean check-l3lib
 
@@ -118,13 +118,12 @@ test: riscv-sim $(TEST_ELFS)
 # Comparison with sail-riscv
 # ---------------------------------------------------------------------------
 
-# int and rvc must agree with sail; fp_fs is expected to diverge while FLD
-# does not set mstatus.FS to Dirty and FP exception flags are not modelled.
+# int, rvc and fp_fs must agree with sail.
 compare: riscv-sim build/int.elf build/rvc.elf build/fp_fs.elf
 	@test -x "$(SAIL)" || { echo "no sail_riscv_sim at $(SAIL); set SAIL" >&2; exit 1; }
 	$(PYTHON) compare.py --sail "$(SAIL)" build/int.elf
 	$(PYTHON) compare.py --sail "$(SAIL)" build/rvc.elf
-	-$(PYTHON) compare.py --sail "$(SAIL)" build/fp_fs.elf
+	$(PYTHON) compare.py --sail "$(SAIL)" build/fp_fs.elf
 
 clean:
 	rm -rf build riscv-sim riscv-sim.log sse_fp64_shim.so

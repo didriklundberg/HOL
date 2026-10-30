@@ -57,7 +57,24 @@ Single-precision results, an 8-byte struct, are correct. `lib/sse_fp64_shim.c`
 wraps the seven functions so that they return the result as a plain
 `uint64_t`, and `lib/SSEFix.sml` rebinds them in structure `SSE` before
 `FP64.sml` is loaded. Without this every RV64D arithmetic instruction is
-wrong; it is a problem of the host toolchain, not of the model.
+wrong; it is a problem of the host toolchain, not of the model. The other
+entry points (comparisons, conversions between integers, single and double,
+round-to-integral) return a scalar or an 8-byte struct and are not affected:
+with the shim, `FP64`, `FP32` and `FPConvert` agree with C's `fenv.h`/libm
+in all four rounding modes, flags included (17,565 cases in WP1 batch A; the
+only difference is the sign of the NaN that `mul_sub` propagates).
+
+### The IntInf.~>> work-around
+
+Poly/ML 5.9.2's `IntInf.~>>` rounds toward zero instead of down for a
+negative value outside the short-integer range (below -2^62), for example
+`IntInf.~>> (~2^63, 0w64)` gives 0 instead of ~1 (fixed upstream after the
+release, Poly/ML issue #243). `lib/IntInfFix.sml` redefines `IntInf` with a
+correct `~>>`, and `poly_run.sml` loads it before L3's library, so that the
+library, the model and the harness all use it. L3's library and the model
+only shift non-negative values, so this is a safeguard; it matters for code
+added to the harness or for oracles written in SML, which should use
+`IntInf.div` (or load this file) rather than the stock `~>>`.
 
 ## Running
 
@@ -195,7 +212,7 @@ warning lists them; the current model gives every number its own name.
 
 Example (the floating-point smoke test):
 
-    S 9 pc=0x0000000080000024 inst=0x02b57653 f12=0x400e000000000000 csr[sstatus]=0x8000000200006000 csr[mstatus]=0x8000000a00006000  # FADD.D       fs12, fs10, fs11
+    S 7 pc=0x000000008000001c inst=0x00043507 f10=0x3ff8000000000000 csr[sstatus]=0x8000000200006000 csr[mstatus]=0x8000000a00006000  # FLD          fs10, fp, 0x0
     S 11 pc=0x000000008000002c inst=0x00adb023 mw[0x0000000080002030]=0x400e000000000000  # SD           a0, s11, 0x0
 
 (The disassembly is the model's `instructionToString`, which prints FPR
@@ -303,8 +320,17 @@ of the other, which is stale, until sail logs it again. `mip` and `sip` are
 ignored by default (`--no-default-ignores` to compare them), because the
 two emulators drive them from timers of their own; both now start with
 `mtimecmp` = 0 and so with MTIP set before the first instruction, and they
-agree on the riscv-tests listed below also with `--no-default-ignores`.
+agree on the riscv-tests below also with `--no-default-ignores`.
 CSRs that only one side writes are listed in a note, not compared.
+
+`fflags`, `frm` and `fcsr` are views of one register, but sail logs a CSR
+instruction's write only under the name the instruction used (and `fflags`
+and `fcsr` when an FP instruction accrues flags), so after a program writes
+one of them compare.py's copy of the others can be stale and report a false
+divergence. For FP programs that write these CSRs, use `--ignore-csr fcsr`
+and read the CSRs into registers, which are compared exactly. The `rv64uf`
+and `rv64ud` riscv-tests are such programs: they read and clear `fflags`
+with `csrrw` after every operation.
 
 ### The sail trace normaliser
 
@@ -336,23 +362,26 @@ the smoke tests and on `rv64uf-p-fadd` from riscv-tests:
 
 ### Results so far
 
-With sail's default configuration, `int.elf` (217 steps) and `rvc.elf` (118
-steps) agree. `fp_fs.elf` (69 steps) diverges where expected: at step 7,
-where `fld` leaves `mstatus.FS` at Initial and sail sets it to Dirty
-(audit F5), and at step 37, `fcvt.l.d` with `rtz` of -22.125, where sail
-sets `fflags.NX` and the model sets no flag (F11). Scratch programs also
-showed that the model does not NaN-box single-precision results (`flw`
-leaves the upper 32 bits of the FPR, sail writes `0xffffffff`; F7), and that
-its `fmadd.d` rounds twice (`dfn'FMADD_D` is `FP64.add` of `FP64.mul`;
-2^-60 expected, 0 computed; F9). All are findings of the WP1 audit
-(`../doc/audit-unprivileged.md`), not harness problems.
+With sail's default configuration, `int.elf` (217 steps), `rvc.elf` (118
+steps) and `fp_fs.elf` (69 steps) agree. Before the fixes of the WP1 audit
+(`../doc/audit-unprivileged.md`), `fp_fs.elf` diverged at step 7, where
+`fld` left `mstatus.FS` at Initial (audit F5), and at step 37, `fcvt.l.d`
+with `rtz` of -22.125, where the model set no `fflags.NX` (F11); scratch
+programs also showed that the model did not NaN-box single-precision results
+(F7) and that its `fmadd.d` rounded twice (F9). These were audit findings,
+not harness problems.
 
 With `--sail-config-override` of an RV64GC M/U configuration with PMP
-(`rv64gc_mu_pmp.json`), the traces of `rv64ui-p-simple`, `-add`, `-jalr`,
-`rv64mi-p-scall`, `-zicntr`, `-pmpaddr`, `-ma_addr`, `-ma_fetch`,
-`-illegal` and the six `rv64mi-p-*-misaligned` tests agree with sail;
-`rv64mi-p-csr` diverges once, at step 171, where `fmv.w.x` does not
-NaN-box (F7).
+(`rv64gc_mu_pmp.json`), the traces of 132 of the 134
+`rv64{ui,um,ua,uf,ud,uc,mi,si}-p-*` riscv-tests agree with sail, those of
+`rv64uf` and `rv64ud` with `--ignore-csr fcsr` (above). Among them are
+`rv64mi-p-csr`, which diverged at step 171 until `fmv.w.x` NaN-boxed its
+result (F7), and `rv64ui-p-ma_data` and `rv64mi-p-breakpoint`, which fail on
+both emulators (below). The other two, `rv64si-p-dirty` and
+`rv64si-p-icache-alias`, need Sv39 and reach addresses outside sail's
+memory, which fault in sail but not in the harness (no address-range
+checks, above). Within the model's scope, the one known divergence is
+rounding mode RMM in an instruction that rounds (audit F13, below).
 
 ## Smoke tests
 
@@ -381,18 +410,16 @@ instructions illegal. `build/fp.elf` (for `make test`) and
 
 ## Known not to work yet
 
-- **Some riscv-tests.** Of the 134 `rv64{ui,um,ua,uf,ud,uc,mi,si}-p-*`
-  tests, 112 pass: `rv64ui-p-ma_data` fails by design, as on sail
-  (misaligned accesses trap); four `rv64ua-p-amo{min,max}{,u}_w` fail
-  (audit F4); 6 of `rv64uf` and 8 of `rv64ud` fail on the FP bugs of the
-  audit (`rv64uf-p-fcvt` ends with exit 3, `FP32.fromInt: too large`, F29);
-  `rv64mi-p-breakpoint` needs Sdtrig; `rv64si-p-dirty` and
-  `rv64si-p-icache-alias` need Sv39. riscv-arch-test has not been rerun on
-  this model.
+- **Four riscv-tests.** Of the 134 `rv64{ui,um,ua,uf,ud,uc,mi,si}-p-*`
+  tests, 130 pass. The other four fail on sail too: `rv64ui-p-ma_data` by
+  design (misaligned accesses trap), `rv64mi-p-breakpoint` because it needs
+  Sdtrig, `rv64si-p-dirty` and `rv64si-p-icache-alias` because they need
+  Sv39. riscv-arch-test has not been rerun on this model.
 - **FP programs** need `mstatus.FS` set first (above), on both emulators.
-  FP exception flags are mostly not modelled: the spec drops the flags that
-  L3's `FP64`/`FP32` operations return (`L3.snd`); only a few NaN cases call
-  `setFP_Invalid`.
+  Rounding mode RMM raises illegal instruction in the model except in the
+  exact conversions `fcvt.d.s`, `fcvt.d.w` and `fcvt.d.wu` (audit F13,
+  deferred: neither L3's FP library nor HOL's binary_ieee rounds ties away
+  from zero).
 - Only bare-metal, little-endian ELF64 files; no virtual memory (above); no
   devices other than HTIF and the CLINT words; HTIF syscall-proxy requests
   (device 0 with bit 0 clear) are ignored with a warning, as in sail.
@@ -402,11 +429,12 @@ instructions illegal. `build/fp.elf` (for `make test`) and
 | File | |
 |---|---|
 | `Makefile` | build, `test`, `compare` |
-| `poly_run.sml` | loads the L3 library, `SSEFix.sml`, the model, `lib/Elf`, `sim.sml` under `polyc` |
+| `poly_run.sml` | loads `IntInfFix.sml`, the L3 library, `SSEFix.sml`, the model, `lib/Elf`, `sim.sml` under `polyc` |
 | `sim.sml` | the harness (structure `Sim`) |
 | `lib/Elf.sig`, `lib/Elf.sml` | ELF64 reader with symbol table |
 | `lib/LICENSE.l3riscv` | the l3riscv licence (BSD) |
 | `lib/sse_fp64_shim.c`, `lib/SSEFix.sml` | the floating-point work-around |
+| `lib/IntInfFix.sml` | the `IntInf.~>>` work-around |
 | `compare.py` | trace comparison with sail-riscv |
 | `tests/` | smoke tests, linker script, expected results |
 
