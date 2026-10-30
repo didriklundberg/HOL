@@ -1,0 +1,5 @@
+build/
+riscv-sim
+riscv-sim.log
+sse_fp64_shim.so
+__pycache__/
