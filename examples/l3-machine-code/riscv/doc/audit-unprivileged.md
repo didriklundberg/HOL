@@ -230,6 +230,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
 - **Fix:** In both defines, write
   `else if not matchLoadReservation(vAddr) then { writeRD(rd, 1); ReserveLoad <- None }`.
   If F24 is done at the same time, its restructured SC already includes this.
+- **Resolution:** a46b360f4 (the proposed fix; F24's restructuring is left to WP2).
 
 #### F4. AMOMIN.W/AMOMAX.W/AMOMINU.W/AMOMAXU.W compare all 64 bits of rs2
 
@@ -260,6 +261,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
 - **Fix:** `data = SignExtend(GPR(rs2)<31:0>)` in the four min/max .W defines. It is harmless in
   the other five. Sign extension preserves both signed and unsigned 32-bit order, so the 64-bit
   compare then matches the 32-bit one.
+- **Resolution:** fbc4e337c; riscv-tests `rv64ua-p-amo{min,max}{,u}_w` now pass (they failed test 7).
 
 #### F5. FLW and FLD bypass writeFPRS/writeFPRD, so mstatus.FS is not set to Dirty
 
@@ -774,6 +776,7 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
   ```
   `riscv_stepLib` enumerates `DecodeRVC_def` with `find_all_rvc` (`step/riscv_stepLib.sml:111`),
   so rebuild it and check that the RVC theorem names it produces still suit downstream users.
+- **Resolution:** 74c59d9b4; `riscv_dict` gains five unused RVC patterns, step theorems unchanged.
 
 #### F16. Misaligned LR.W/LR.D raise cause 6 instead of a load exception
 
@@ -922,6 +925,7 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
     This keeps the HOL export's shape.
 
   Either way, check that the regenerated riscvScript.sml is unchanged or alpha-equivalent.
+- **Resolution:** f4bf99282, by a third way: writeRD binds `v = val`; riscvScript.sml is unchanged.
 
 #### F21. rawReadHalf returns halfwords in reversed order (dead code, exported to HOL)
 
@@ -937,6 +941,7 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
   at 0x8000/2/4/6 gives 0x1716, 0x1514, 0x1312, 0x1110; expected 0x1110, 0x1312, 0x1514, 0x1716.
 - **Fix:** Delete it, or reverse the cases: '00' gives `<15:0>`, '01' gives `<31:16>`, '10'
   gives `<47:32>` and '11' gives `<63:48>`.
+- **Resolution:** db2396f08 (deleted).
 
 #### F22. EncodeRVC and CBtype produce wrong encodings (dead code, exported to HOL)
 
@@ -963,6 +968,7 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
   | beq x8,x0,−256 | 0x1001 | 0xD001 |
 - **Fix:** Delete EncodeRVC, CBtype and the `rvc` type. Alternatively, put `imm<4>` in bit 2 and
   call `CBtype(1, 6, …)` for BEQ (and 7 for BNE).
+- **Resolution:** 7f2c56787 (deleted EncodeRVC, CBtype, `rvc` and `rvcreg`).
 
 #### F23. CSRRW/CSRRWI with rd=x0 still read the CSR
 
@@ -1170,6 +1176,7 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
   1+2 = 0x4008000000000000; the older `~/Documents/riscv-tools/work/sim/riscv-sim` printed
   garbage for fnmsub.d/fnmadd.d. Longer term, a softfloat binding would also give RMM (F13) and
   RISC-V NaN behaviour (F10) in the SML export.
+- **Resolution:** no spec change; the `sim/` shim is documented and needs no extension for batch B.
 
 #### F31. Poly/ML 5.9.2 `IntInf.~>>` is wrong for negative bignums
 
@@ -1194,6 +1201,17 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
   `~>>`-based MULH/MULHSU oracle reported about 4,000 false mismatches.
 - **Fix:** None in the spec. SML oracles and harnesses should use `IntInf.div(x, 2^n)`, or mask
   to a non-negative value before shifting. Record this in the WP0 harness notes.
+- **Upstream:** Poly/ML issue #243, fixed after the 5.9.2 release (master 64eb08b0 and branch
+  fixes-5.9.2 ccd3e371, December 2025): `PolyShiftRightArbitrary` in `libpolyml/arb.cpp` shifted
+  the magnitude and kept the sign. Reproduction on the 5.9.2 release (x86-64, GMP), which prints
+  `0 ~1`:
+  ```sml
+  val x = ~(IntInf.pow (2, 63));
+  val got = IntInf.~>> (x, 0w64);
+  val expected = IntInf.div (x, IntInf.pow (2, 64));
+  val () = print (IntInf.toString got ^ " " ^ IntInf.toString expected ^ "\n");
+  ```
+- **Resolution:** no spec change; `sim/lib/IntInfFix.sml` corrects `~>>` before L3's library loads.
 
 ## 3. Coverage: checked and found correct
 
