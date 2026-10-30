@@ -177,12 +177,17 @@ fun expected h (outer, inner) =
     val fp = Lib.mem outer ["FPLoad", "FPStore", "FArith", "FConv"]
     val dyn = Lib.mem inner rounding andalso
               (hex_int h div 4096) mod 8 = 7
+    (* the address of a 32-bit load or store with base register x0 is a
+       constant, and its alignment is decided by riscv_step *)
+    val x0_base = not compressed andalso (hex_int h div 32768) mod 32 = 0
     val required =
       ["H1", "H3.pmpcfg0", "H3.pmpcfg2", "H6", "exception", "NextFetch",
        "pc<0>", "mem", if compressed then "C" else "pc<1>|C"] @
       (if w > 0 then ["H2"] else []) @
       (if w = 8 then ["H4.pmpcfg0", "H4.pmpcfg2"] else []) @
-      (case w of 2 => ["H5.1"] | 4 => ["H5.2"] | 8 => ["H5.3"] | _ => []) @
+      (if x0_base then []
+       else case w of 2 => ["H5.1"] | 4 => ["H5.2"] | 8 => ["H5.3"]
+                    | _ => []) @
       (if Lib.mem inner rv64_only then ["RV64"] else []) @
       (if fp then ["FS"] else []) @
       (if dyn then ["frm"] else [])
@@ -237,8 +242,7 @@ fun check h th =
                     String.isPrefix "UNEXPECTED" c
                    then NONE
                  else SOME ("not allowed: " ^ c)) ucats @
-      (if Lib.mem "F" (List.map Parse.term_to_string (Thm.hyp th))
-         then ["vacuous"] else []) @
+      (if List.exists Feq (Thm.hyp th) then ["vacuous"] else []) @
       (if Term.aconv l ``riscv_step$NextRISCV ^s`` andalso
           optionSyntax.is_some r andalso is_update (optionSyntax.dest_some r)
          then []
@@ -649,8 +653,15 @@ fun test name h =
             ; true ))
      | NONE =>
          let
+           (* a misaligned constant address: riscv_step fails *)
            val th = riscv_step_hex h
-           val (inst as (_, inner), cats, errors) = check h th
+                    handle e as HOL_ERR herr =>
+                      if String.isPrefix "instruction traps"
+                           (Feedback.message_of herr)
+                        then Thm.ASSUME boolSyntax.F
+                      else raise e
+           val (inst as (_, inner), cats, errors) =
+             if Feq (Thm.concl th) then (inst, [], ["vacuous"]) else check h th
            val compressed = String.size h <= 4
            val cls = class_of inst
            val key = if compressed then "compressed" else cls
