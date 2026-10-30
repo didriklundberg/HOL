@@ -1,18 +1,16 @@
 /* Smoke test (c): double-precision floating point (fld, fadd.d, fmul.d,
    fmadd.d, fcvt.l.d, fcvt.d.l, feq.d, fsd, fmv.x.d), checked against known
-   IEEE 754 results.  Assembled without C.  No CSR is accessed: the default
-   rounding mode is used through the instructions' dyn rm field and the
-   model starts with mstatus.FS = Initial. */
+   IEEE 754 results.  Assembled without C.  The default rounding mode is
+   used through the instructions' dyn rm field; with ENABLE_FS (always,
+   since mstatus.FS resets to Off) the only CSR access enables FP. */
 #include "test.h"
 
         TEST_START
 
 #ifdef ENABLE_FS
-        /* Only for `make compare`: sail-riscv resets mstatus.FS to Off,
-           which makes FP instructions illegal; the model resets it to
-           Initial.  Setting bit 13, which is in FS in both layouts (priv 1.7:
-           bits 13:12, 1.13: bits 14:13), enables FP in both.  The smoke test
-           proper uses no CSR. */
+        /* sail-riscv and the model reset mstatus.FS (bits 14:13) to Off,
+           which makes FP instructions illegal; setting bit 13 makes it
+           Initial. */
         li      t0, 0x2000
         csrs    mstatus, t0
 #endif

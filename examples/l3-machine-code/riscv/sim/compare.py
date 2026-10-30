@@ -34,9 +34,10 @@ DEFAULT_SAIL = os.environ.get(
     os.path.expanduser(
         "~/Documents/riscv-tools/sail-riscv/build/c_emulator/sail_riscv_sim"))
 
-# riscv.spec (priv 1.7) names -> sail-riscv (priv 1.13) names, for CSRs
-# whose meaning is the same.  riscv-sim writes name@0xNNN when the spec
-# gives one name to several numbers (0x144 and 0x344 are both "mip").
+# Model CSR names -> sail-riscv names, for CSRs whose meaning is the same.
+# The priv-1.13 riscv.spec uses sail's names; these are the names of the
+# earlier priv-1.7 spec, where 0x144 and 0x344 were both "mip" (riscv-sim
+# writes name@0xNNN when the spec gives one name to several numbers).
 DEFAULT_CSR_ALIASES = {
     "mbadaddr": "mtval",
     "sbadaddr": "stval",
@@ -46,10 +47,16 @@ DEFAULT_CSR_ALIASES = {
 }
 
 # Ignored by default: mip/sip hold the timer-interrupt pending bits, which
-# both emulators drive from platform timers that are configured
-# differently (sail's CLINT has mtimecmp = 0 at reset, so MTIP is set
-# before the first instruction).
+# the two emulators drive from timers of their own (riscv-sim advances the
+# CLINT's mtime in memory by one per step).  Both start with mtimecmp = 0,
+# so MTIP is set before the first instruction on both sides.
 DEFAULT_CSR_IGNORES = ["mip", "sip"]
+
+# sstatus, sie and sip are views of mstatus, mie and mip (priv spec
+# §12.1.1, §12.1.3).  sail logs only the CSR that an instruction writes
+# (or that trap entry or an xRET writes), so when it logs one of a pair its
+# last logged value of the other is stale: compare.py then forgets it.
+CSR_VIEWS = [("sstatus", "mstatus"), ("sie", "mie"), ("sip", "mip")]
 
 # riscv-sim's first trace line, and its exit status for a bad command line
 # or an ELF it cannot load
@@ -365,6 +372,9 @@ def compare(model, sail, opts):
             wb = dict(b.csr)
             m_csr.update(wa)
             s_csr.update(wb)
+            for v, r in CSR_VIEWS:
+                if (v in wb) != (r in wb):
+                    s_csr.pop(r if v in wb else v, None)
             for c in sorted(set(wa) | set(wb)):
                 if c in ignores:
                     continue

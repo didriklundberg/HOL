@@ -73,7 +73,7 @@ wrong; it is a problem of the host toolchain, not of the model.
 | `--pc-start ADDR` | start at ADDR instead of the ELF entry point |
 | `--signature FILE` | at the end, write memory from symbol `begin_signature` up to `end_signature` to FILE |
 | `--tohost-exit` | also stop at the first store that leaves a non-zero device-0 value in `tohost`, without waiting for a complete HTIF command (below) |
-| `--no-c` | run with the C extension disabled |
+| `--no-c` | run with the C extension disabled (`misa.C` = 0) |
 
 Numbers are decimal or `0x` hexadecimal. Messages (pass/fail, warnings) go
 to stderr, so that stdout is only the trace.
@@ -100,7 +100,8 @@ The signature is written on every exit except status 3 and 64.
   an earlier segment has already written is zeroed explicitly (a large
   `.bss` costs nothing). Overlapping segments are allowed, the later one
   wins; sail-riscv refuses to load them. All other memory reads as zero;
-  there are no devices and no address-range checks.
+  there are no address-range checks, and the only devices are HTIF and the
+  CLINT words (below).
 - **Symbols**: from the ELF's symbol table (`tohost`, `begin_signature`,
   `end_signature`), with sail-riscv's rule (`ELF::symbols()`): only defined
   symbols (`st_shndx` not `SHN_UNDEF`) of type `NOTYPE`, `OBJECT`, `FUNC` or
@@ -112,12 +113,18 @@ The signature is written on every exit except status 3 and 64.
   `EM_RISCV` (243); anything else is rejected with exit status 64, as sail
   rejects a non-RISC-V ELF.
 - **Machine state**: `initIdent RV64I`, `initMachine 0`, `initRegs pc`, one
-  hart. This leaves the model in M-mode with all GPRs and FPRs zero,
-  `mstatus.FS` = Initial, `mtvec` = 0x100 (so traps from M-mode go to
-  0x1c0, see `takeTrap`), and the C extension on. `--no-c` clears
-  `mcpuid.C` after `initIdent`; the model then decodes no 16-bit instruction
+  hart, then `a0` = 0 (`mhartid`) and `a1` = 0x1000 (the device-tree
+  address), as sail-riscv's `init_boot_requirements` does (design D72).
+  This leaves the model in M-mode with the other GPRs and all FPRs zero,
+  `mstatus` = 0x0000000a00000000 (`FS` = Off, as in sail, so FP
+  instructions are illegal until the program sets `FS`; `MPP` = U),
+  `mtvec` = 0 in Direct mode (so every trap goes to address 0 until the
+  program sets `mtvec`), every PMP entry off, and `misa` =
+  0x800000000014112d (RV64IMAFDCSU), so the C extension is on. `--no-c`
+  clears `misa.C` after `initIdent` (`initMachine` does not reset `misa`),
+  as a write of `misa` could; the model then decodes no 16-bit instruction
   and requires 4-byte aligned fetch and jump targets (`haveRVC` in the
-  spec).
+  spec, which reads `misa.C`), and bit 1 of `mepc`/`sepc` reads as zero.
 - **HTIF**: if the ELF has a `tohost` symbol, every store that overlaps the
   8 bytes at `tohost` is passed through a copy of sail-riscv's `htif_store`
   (`model/sys/platform.sail` in sail): an 8-byte store, or a store to the
@@ -133,26 +140,32 @@ The signature is written on every exit except status 3 and 64.
   other devices are left to HTIF, so console output written with one 8-byte
   store works; console output written as two 4-byte stores, lower word
   first, still looks like an even device-0 value after the first store and
-  fails. The model's own
-  HTIF, the `mtohost` CSR that `Next` polls, also ends the run (it sets
-  `done` at the start of the step after the CSR write, which therefore
-  still executes).
-- **Timer**: whatever the model does (`tickClock`, `checkTimers`): `mip.MTIP`
-  and `STIP` are set once the clock passes `mtimecmp` = 0, which happens at
-  step 200. Interrupts stay disabled unless the program enables them.
+  fails. `tohost` in memory is the only HTIF: the model has none of its
+  own (the priv-1.7 `mtohost` CSR is gone; HTIF belongs to the emulator,
+  design D13).
+- **Timer**: the CLINT's registers are words of the model's memory, as in
+  sail-riscv's platform (design D67): `msip` at 0x2000000, `mtimecmp` at
+  0x2004000 and `mtime` at 0x200bff8 (hart 0). The model reads them
+  (`mip.MTIP` is `mtimecmp <= mtime`, `mip.MSIP` is `msip` bit 0) but
+  never advances `mtime`; the harness adds one to `mtime` after every
+  step, trapping or not, as sail does with one instruction per tick. The
+  harness writes nothing else there, so all three start at 0 and `MTIP`
+  is pending from step 0, as in sail. Interrupts stay disabled unless the
+  program enables them (`mstatus.MIE`, `mie`).
 
 ## Trace format
 
 One line per step, that is per call of `Next`: an instruction that retires
-or traps, or a failed fetch. The fields of a step line are separated by
-single spaces, and nothing after ` # ` is significant.
+or traps, a failed fetch, or an interrupt taken. The fields of a step line
+are separated by single spaces, and nothing after ` # ` is significant.
 
     S <n> pc=0x<16 hex> inst=<instruction> <effect>... [# <disassembly>]
 
 - `<n>`: step number from 0, the same numbering as sail's `[n]`.
 - `pc`: the address the step fetched from (not the next pc).
 - `inst`: `0x` and 4 hex digits for a 16-bit instruction, 8 for a 32-bit
-  one, or `-` if the fetch failed.
+  one, or `-` if the fetch failed or the step took an interrupt (the
+  comment is then `# fetch failed` or `# interrupt`).
 
 Effects, always in this order:
 
@@ -163,9 +176,9 @@ Effects, always in this order:
 | `csr[<name>]=0x<16 hex>` | CSR written, its value after the step; ascending CSR number |
 | `mr[0x<16 hex>]=0x<2w hex>` | memory read of w bytes at that address (only with `--trace-mem-reads`) |
 | `mw[0x<16 hex>]=0x<2w hex>` | memory write of w bytes; the data as a little-endian number, as sail prints it |
-| `trap=<cause>` | the step took an exception with this `mcause` code (decimal) |
-| `tval=0x<16 hex>` | after `trap=`, the trap value, when the model has one (below) |
-| `intr=<cause>` | an interrupt was taken at the end of the step |
+| `trap=<cause>` | the step took an exception with this cause code (decimal), into M-mode (`mcause`) or S-mode (`scause`) |
+| `tval=0x<16 hex>` | after `trap=`, always: the trap value, `mtval` or `stval` after the trap |
+| `intr=<cause>` | the step took an interrupt with this cause code (without bit 63) instead of fetching |
 
 All hex digits are lower case. Other lines:
 
@@ -175,16 +188,15 @@ All hex digits are lower case. Other lines:
 - `# ...`: comments: a header, and `# step <n> raised <exception>` before an
   exit with status 3.
 
-CSR names are those of `csrName` in `riscv.spec` (priv 1.7: `mbadaddr`,
-`mcpuid`, `sptbr`, ...). Where `csrName` gives one name to several numbers
-the trace writes `name@0xNNN`: `0x144` and `0x344` are both called `mip`, and
-several counter shadows have the names of the counters they shadow (a
-warning lists them all; these are bugs in `csrName`).
+CSR names are those of `csrName` in `riscv.spec`, the priv-1.13 names that
+sail uses (`mtval`, `stval`, `satp`, `misa`, ...). Should `csrName` give one
+name to several numbers, the trace writes `name@0xNNN` for them and a
+warning lists them; the current model gives every number its own name.
 
 Example (the floating-point smoke test):
 
-    S 7 pc=0x000000008000001c inst=0x02b57653 f12=0x400e000000000000 csr[sstatus]=0x8000000000003000 csr[mstatus]=0x8000000000003006  # FADD.D       fs12, fs10, fs11
-    S 9 pc=0x0000000080000024 inst=0x00adb023 mw[0x0000000080002030]=0x400e000000000000  # SD           a0, s11, 0x0
+    S 9 pc=0x0000000080000024 inst=0x02b57653 f12=0x400e000000000000 csr[sstatus]=0x8000000200006000 csr[mstatus]=0x8000000a00006000  # FADD.D       fs12, fs10, fs11
+    S 11 pc=0x000000008000002c inst=0x00adb023 mw[0x0000000080002030]=0x400e000000000000  # SD           a0, s11, 0x0
 
 (The disassembly is the model's `instructionToString`, which prints FPR
 operands with odd names.)
@@ -203,13 +215,16 @@ afterwards:
   comes from the log text, the value from the state after the step. As a
   check, the GPR and FPR files are also diffed around each step; a change
   without a log entry is traced anyway and reported on stderr.
-- **Implicit CSR writes** (trap entry, `mstatus.FS` from FP instructions,
-  `fflags`) go to the CSR records directly, without a log entry. The harness
-  watches every CSR that `is_CSR_defined` accepts, except the counters and
-  timers (`cycle`, `time`, `instret` and their shadows and high halves,
-  `mtime`, `stime`, `htime`), and traces those whose value changed in the
-  step. A watched CSR rewritten with its old value implicitly is therefore
-  not traced; `compare.py` compares CSRs as state for this reason.
+- **Implicit CSR writes** (trap entry and `xRET`, `mstatus.FS` from FP
+  instructions, `fflags`, `mip` from the CLINT) go to the CSR records
+  directly, without a log entry. The harness watches every CSR that
+  `is_CSR_defined` accepts, except the counters and timers (`cycle`,
+  `time`, `instret`, `mcycle`, `minstret`), and traces those whose value
+  changed in the step. `mepc` and `sepc` are traced as stored, not as
+  read: with `misa.C` = 0 their bit 1 reads as zero but stays stored
+  (design D44), and sail logs the stored value. A watched CSR rewritten
+  with its old value implicitly is therefore not traced; `compare.py`
+  compares CSRs as state for this reason.
 - **Memory writes**: the spec's `StateDelta` record (`Delta`, set by
   `recordStore`) gives the address and width of the store, AMO or SC of the
   step; the data are read back from memory. The harness clears `Delta`
@@ -220,15 +235,16 @@ afterwards:
   `recordLoad`; for an `LR` that does not trap the harness takes the address
   from `ReserveLoad`, which the `LR` has just set, and reads the 4 or 8
   bytes back from memory (an `LR` does not change memory).
-- **Traps**: the log entry of `takeTrap`, `trapping from ... [exc] <cause>`
-  or `[intr]`. `tval` is printed only when the step signalled an address
-  exception (`signalAddressException`), and is then `mbadaddr`; for other
-  exceptions the priv-1.7 model writes no trap value.
+- **Traps**: the log entry of `takeTrap`, `trapping from <p> to <q> at pc
+  ... [exc] <cause>` or `[intr]`. `takeTrap` writes a trap value for every
+  exception (zero where the spec defines none), so `tval` is printed for
+  every exception: `stval` when `q` is S (the exception was delegated),
+  else `mtval`. A step that takes an interrupt does not fetch (the model
+  checks for interrupts at the start of `Next`), so it has `inst=-` and no
+  other effects than the trap-entry CSRs.
 
-Addresses are those that the store or load computed (virtual addresses),
-which equal physical ones while the model runs with `mstatus.VM` = Mbare, as
-it always does from reset. Page-table updates by the model's page walker are
-not traced.
+Addresses are those that the store or load computed. The model implements
+only `satp.MODE` = Bare, so they are physical addresses.
 
 ## compare.py
 
@@ -276,12 +292,19 @@ without a log). Both sides start from their known values (the model's `I`
 lines; sail's are unknown until written); after each step, every CSR that
 either side wrote in that step is compared, if both sides know a value for
 it. A mismatch is reported once until one of the values changes. Model
-names are mapped to sail's first (`mbadaddr`→`mtval`, `sbadaddr`→`stval`,
-`sptbr`→`satp`, `mip@0x344`→`mip`, `mip@0x144`→`sip`; extend with
-`--csr-alias`). `mip` and `sip` are ignored by default (`--no-default-ignores`
-to compare them): sail's CLINT starts with `mtimecmp` = 0 and sets MTIP
-before the first instruction, the model at step 200. CSRs that only one side
-knows are listed at the end, not compared.
+names are mapped to sail's first; the model now uses sail's names, and the
+built-in aliases (`mbadaddr`→`mtval`, `sbadaddr`→`stval`, `sptbr`→`satp`,
+`mip@0x344`→`mip`, `mip@0x144`→`sip`) only matter for traces of the
+earlier priv-1.7 model; extend them with `--csr-alias`. `sstatus`, `sie`
+and `sip` are views of `mstatus`, `mie` and `mip`; sail logs only the one
+an instruction (or trap entry, or an `xRET`) writes, so when a step's sail
+log has one of a pair and not the other, compare.py forgets sail's value
+of the other, which is stale, until sail logs it again. `mip` and `sip` are
+ignored by default (`--no-default-ignores` to compare them), because the
+two emulators drive them from timers of their own; both now start with
+`mtimecmp` = 0 and so with MTIP set before the first instruction, and they
+agree on the riscv-tests listed below also with `--no-default-ignores`.
+CSRs that only one side writes are listed in a note, not compared.
 
 ### The sail trace normaliser
 
@@ -314,27 +337,36 @@ the smoke tests and on `rv64uf-p-fadd` from riscv-tests:
 ### Results so far
 
 With sail's default configuration, `int.elf` (217 steps) and `rvc.elf` (118
-steps) agree. `fp_fs.elf` (the FP test with `mstatus.FS` switched on, see
-below) diverges where expected: the `mstatus` layout (priv 1.7 against 1.13),
-and at step 37, `fcvt.l.d` with `rtz` of -22.125, where sail sets
-`fflags.NX` and the model sets no flag. Scratch programs also showed that
-the model does not NaN-box single-precision results (`flw` leaves the upper
-32 bits of the FPR, sail writes `0xffffffff`), and that its `fmadd.d` rounds
-twice (`dfn'FMADD_D` is `FP64.add` of `FP64.mul`; 2^-60 expected, 0
-computed). All three are findings for the WP1 audit, not harness problems.
+steps) agree. `fp_fs.elf` (69 steps) diverges where expected: at step 7,
+where `fld` leaves `mstatus.FS` at Initial and sail sets it to Dirty
+(audit F5), and at step 37, `fcvt.l.d` with `rtz` of -22.125, where sail
+sets `fflags.NX` and the model sets no flag (F11). Scratch programs also
+showed that the model does not NaN-box single-precision results (`flw`
+leaves the upper 32 bits of the FPR, sail writes `0xffffffff`; F7), and that
+its `fmadd.d` rounds twice (`dfn'FMADD_D` is `FP64.add` of `FP64.mul`;
+2^-60 expected, 0 computed; F9). All are findings of the WP1 audit
+(`../doc/audit-unprivileged.md`), not harness problems.
+
+With `--sail-config-override` of an RV64GC M/U configuration with PMP
+(`rv64gc_mu_pmp.json`), the traces of `rv64ui-p-simple`, `-add`, `-jalr`,
+`rv64mi-p-scall`, `-zicntr`, `-pmpaddr`, `-ma_addr`, `-ma_fetch`,
+`-illegal` and the six `rv64mi-p-*-misaligned` tests agree with sail;
+`rv64mi-p-csr` diverges once, at step 171, where `fmv.w.x` does not
+NaN-box (F7).
 
 ## Smoke tests
 
 `tests/` has small self-checking programs in the style of riscv-tests
 (`tests/test.h`): `gp` holds the number of the current check, failure stores
 `(n << 1) | 1` to `tohost`, success stores 1, both as one 8-byte store.
-Results are also stored in a signature region. None of them touches a CSR.
+Results are also stored in a signature region. Only `fp.S` touches a CSR
+(below).
 
 | Test | | Expected |
 |---|---|---|
 | `int.S` (rv64im) | sum over an 8-dword array, sign/zero-extending loads, sb/sh/sw/sd, mul/mulhu/div/rem including division by zero, shifts, `addiw` overflow, compares, call/return | exit 0, `int.sig.expected`, and the trace in `int.trace.expected` |
 | `rvc.S` (rv64imac) | written with explicit `c.*` mnemonics: most RV64C instructions, including the stack-pointer forms, `c.addiw`/`c.addw`/`c.subw`, branches, `c.jalr`/`c.jr`, `c.lui` | exit 0, `rvc.sig.expected`; with `--no-c` exit 4 |
-| `fp.S` (rv64imafd) | `fld`, `fadd.d`, `fmul.d`, `fcvt.d.l`, `fmadd.d`, `fcvt.l.d` (rtz), `fsd`, `fmv.x.d`, `feq.d` on values with exact results, and 0.1 + 0.2 | exit 0, `fp.sig.expected` |
+| `fp.S` (rv64imafd, `-DENABLE_FS`) | `fld`, `fadd.d`, `fmul.d`, `fcvt.d.l`, `fmadd.d`, `fcvt.l.d` (rtz), `fsd`, `fmv.x.d`, `feq.d` on values with exact results, and 0.1 + 0.2 | exit 0, `fp.sig.expected` |
 | `fail.S` | fails check 3 on purpose | exit 1, "test 3" |
 
 `make test` also checks that `--max-insts 10` gives exit 2, and prints the
@@ -342,30 +374,28 @@ trace of `fp.elf`. The expected signatures and `int.trace.expected` (CSR
 fields left out) are sail-riscv's results too, so the files test the
 harness, not only the model.
 
-`fp.S` built with `-DENABLE_FS` (`build/fp_fs.elf`, used by `make
-compare`) first sets bit 13 of `mstatus`: sail resets `mstatus.FS` to Off,
-which makes FP instructions illegal there, while the model resets it to
-Initial.
+`fp.S` built with `-DENABLE_FS` first sets bit 13 of `mstatus` (`FS` =
+Initial): both the model and sail reset `mstatus.FS` to Off, which makes FP
+instructions illegal. `build/fp.elf` (for `make test`) and
+`build/fp_fs.elf` (for `make compare`) are therefore built the same way.
 
 ## Known not to work yet
 
-- **Programs that use CSRs, and so riscv-tests and riscv-arch-test.** The
-  model's privileged architecture is priv 1.7. The riscv-tests (`rv64ui-p-*`
-  etc.) read `mhartid` at 0xF14, which the model does not define, at step 32
-  and then end in a trap loop at 0x1c0 (exit 4); the arch tests trap at the
-  first CSR the model does not have (`mideleg`, step 11) and loop likewise. This is expected until the privileged rework (WP2).
-- **FP programs on sail** need `mstatus.FS` set first (above). FP exception
-  flags are mostly not modelled: the spec drops the flags that L3's
-  `FP64`/`FP32` operations return (`L3.snd`); only a few NaN cases call
+- **Some riscv-tests.** Of the 134 `rv64{ui,um,ua,uf,ud,uc,mi,si}-p-*`
+  tests, 112 pass: `rv64ui-p-ma_data` fails by design, as on sail
+  (misaligned accesses trap); four `rv64ua-p-amo{min,max}{,u}_w` fail
+  (audit F4); 6 of `rv64uf` and 8 of `rv64ud` fail on the FP bugs of the
+  audit (`rv64uf-p-fcvt` ends with exit 3, `FP32.fromInt: too large`, F29);
+  `rv64mi-p-breakpoint` needs Sdtrig; `rv64si-p-dirty` and
+  `rv64si-p-icache-alias` need Sv39. riscv-arch-test has not been rerun on
+  this model.
+- **FP programs** need `mstatus.FS` set first (above), on both emulators.
+  FP exception flags are mostly not modelled: the spec drops the flags that
+  L3's `FP64`/`FP32` operations return (`L3.snd`); only a few NaN cases call
   `setFP_Invalid`.
-- **Interrupts** are taken by the model at the end of the step whose
-  instruction retired (`intr=` on that line), by sail as a step of their own;
-  `compare.py` will see the traces shift by one step after an interrupt.
-- **Trap values**: the model has no `mtval`; `tval=` appears only for address
-  exceptions, so for other traps the trap value is not compared.
-- Only bare-metal, little-endian ELF64 files; no virtual memory in the trace
-  (above); no devices other than HTIF; HTIF syscall-proxy requests (device 0
-  with bit 0 clear) are ignored with a warning, as in sail.
+- Only bare-metal, little-endian ELF64 files; no virtual memory (above); no
+  devices other than HTIF and the CLINT words; HTIF syscall-proxy requests
+  (device 0 with bit 0 clear) are ignored with a warning, as in sail.
 
 ## Files and provenance
 
@@ -384,8 +414,8 @@ The structure of `sim.sml` and `poly_run.sml` follows `src/sml/model.sml` and
 `src/sml/poly_run.sml` of [l3riscv](https://github.com/SRI-CSL/l3riscv)
 (SRI International and University of Cambridge, BSD licence, commit
 `a5ed4e10`, 2019-02-25), rewritten for this export: HOL's `riscv.spec`
-derives from an older version of the same spec and has different state, CSR
-names (priv 1.7) and memory (`MEM8`), and no `misa`, `mtval` or `satp`.
+derives from an older version of the same spec, since rewritten for priv
+1.13, and has different state, CSRs and memory (`MEM8`).
 `lib/Elf.sig` is l3riscv's `src/sml/lib/Elf.sig` unchanged apart from a
 provenance header comment, and
 `lib/Elf.sml` its `Elf.sml` with two fixes (both marked): reads of segments

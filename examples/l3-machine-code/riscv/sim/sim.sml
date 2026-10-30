@@ -145,7 +145,7 @@ val usage =
   \                     end_signature) to FILE, one 32-bit word per line\n\
   \  --tohost-exit      stop at the first store that leaves a non-zero value\n\
   \                     in tohost, without waiting for a complete HTIF command\n\
-  \  --no-c             disable the C extension (mcpuid.C := false)\n\
+  \  --no-c             disable the C extension (misa.C := false)\n\
   \  -h, --help         this message\n\
   \\n\
   \Exit status: 0 tohost pass, 1 tohost fail, 2 --max-insts reached,\n\
@@ -308,7 +308,15 @@ fun lookupSym (l : loaded) name =
 
 fun gprVal i = u (riscv.gpr (BitsN.fromInt (IntInf.fromInt i, 5)))
 fun fprVal i = u (riscv.fpr (BitsN.fromInt (IntInf.fromInt i, 5)))
-fun csrVal (n : int) = u (riscv.CSRMap (BitsN.fromInt (IntInf.fromInt n, 12)))
+(* The value traced for CSR n: what a CSR read gives, except that mepc and
+   sepc are traced as stored.  With misa.C = 0 their bit 1 reads as zero
+   but stays stored (design D44); sail logs the stored value, and a write
+   of misa.C is not a write of mepc or sepc. *)
+fun csrVal (n : int) =
+  case n of
+     0x341 => u (#mepc (riscv.MCSR ()))
+   | 0x141 => u (#sepc (riscv.SCSR ()))
+   | _ => u (riscv.CSRMap (BitsN.fromInt (IntInf.fromInt n, 12)))
 fun modelCsrName (n : int) = riscv.csrName (BitsN.fromInt (IntInf.fromInt n, 12))
 fun csrDefined (n : int) = riscv.is_CSR_defined (BitsN.fromInt (IntInf.fromInt n, 12))
 
@@ -335,12 +343,9 @@ fun csrName (n : int) =
 
 (* Counters and timers change on every step and are not watched for
    implicit writes; explicit CSR-instruction writes to them are still
-   traced.  Numbers are those of the priv-1.7 map that riscv.spec uses. *)
+   traced: cycle, time, instret, mcycle, minstret. *)
 fun isCounter n =
-  (0xC00 <= n andalso n <= 0xC02) orelse (0xC80 <= n andalso n <= 0xC82) orelse
-  (0x900 <= n andalso n <= 0x902) orelse (0x980 <= n andalso n <= 0x982) orelse
-  List.exists (fn m => m = n)
-    [0xD01, 0xD81, 0xE01, 0xE81, 0xA01, 0xA81, 0x701, 0x741, 0xB01, 0xB81]
+  (0xC00 <= n andalso n <= 0xC02) orelse n = 0xB00 orelse n = 0xB02
 
 (* The watched CSRs, each with its value after the previous step. *)
 val watched : (int * IntInf.int ref) list ref = ref []
@@ -392,12 +397,24 @@ fun initModel (rvc : bool, pc : IntInf.int) =
            val m = riscv.MCSR ()
          in
            riscv.write'MCSR
-             (riscv.MachineCSR_mcpuid_rupd
-                (m, riscv.mcpuid_C_rupd (#mcpuid m, false)))
+             (riscv.MachineCSR_misa_rupd
+                (m, riscv.misa_C_rupd (#misa m, false)))
          end
   ; riscv.initMachine (!riscv.procID)
   ; riscv.initRegs pc
+    (* boot convention, as sail-riscv's init_boot_requirements: a0 = mhartid,
+       a1 = the device-tree address 0x1000 (design D72) *)
+  ; riscv.write'gpr (BitsN.fromInt (0, 64), BitsN.fromInt (10, 5))
+  ; riscv.write'gpr (BitsN.fromInt (0x1000, 64), BitsN.fromInt (11, 5))
   ; riscv.clear_logs () )
+
+(* The model keeps the CLINT's mtime in memory and does not advance it
+   (design D67); like sail-riscv with one instruction per tick, mtime
+   advances by one after every step, trapping or not. *)
+val MTIME_ADDR : IntInf.int = 0x200BFF8
+
+fun tickMtime () =
+  writeLE (MTIME_ADDR, 8, (readLE (MTIME_ADDR, 8) + 1) mod two64)
 
 (* setupDelta in the spec only runs after a successful fetch, so clear the
    delta before every step to avoid reporting a previous step's store. *)
@@ -440,11 +457,17 @@ datatype logEvent =
     LogGPR of int
   | LogFPR of int
   | LogCSR of string
-  | LogTrap of bool * int  (* is interrupt, cause *)
+  | LogTrap of bool * int * bool  (* is interrupt, cause, taken into S-mode *)
   | LogAddrExc
   | LogOther
 
 fun unparsed s = (warn ("cannot parse model log entry: " ^ s); LogOther)
+
+(* "trapping from <p> to <q> at pc ...": is q S-mode? *)
+fun trapToS s =
+  case String.tokens Char.isSpace s of
+     _ :: _ :: _ :: _ :: q :: _ => q = "S"
+   | _ => false
 
 (* The formats are those of log_w_gpr, log_w_fprs/log_w_fprd, log_w_csr,
    takeTrap and signalAddressException in riscv.spec. *)
@@ -457,7 +480,7 @@ fun classify ((lvl, s) : Nat.nat * string) : logEvent =
     (case inParens s of SOME nm => LogCSR nm | NONE => unparsed s)
   else if lvl = 1 andalso String.isPrefix "trapping from " s then
     (case Option.mapPartial Int.fromString (lastToken s) of
-        SOME c => LogTrap (String.isSubstring "[intr]" s, c)
+        SOME c => LogTrap (String.isSubstring "[intr]" s, c, trapToS s)
       | NONE => unparsed s)
   else if lvl = 1 andalso String.isPrefix "signalling address exception" s then
     LogAddrExc
@@ -601,6 +624,7 @@ fun insertSorted (x : int, l : int list) =
 fun stepQuiet () : stepInfo =
   ( resetDelta (riscv.PC ())
   ; riscv.Next ()
+  ; tickMtime ()
   ; {trapped = logHasTrap (), store = storeOf (riscv.Delta ())} )
 
 (* Run one step and print its trace line. *)
@@ -665,26 +689,23 @@ fun stepTraced (opts : options, n : IntInf.int) : stepInfo =
             end) (!watched)
     val csrs = List.foldl insertSorted [] (explicit @ implicit)
 
-    val fetched = not (#fetch_exc d)
-    val raw = #rinstr d
-
-    (* traps *)
+    (* traps; a step that takes an interrupt fetches nothing *)
     val trap = List.find (fn LogTrap _ => true | _ => false) events
-    val addrExc = List.exists (fn LogAddrExc => true | _ => false) events
+    val interrupt = case trap of SOME (LogTrap (true, _, _)) => true | _ => false
+    val fetched = not (#fetch_exc d) andalso not interrupt
+    val raw = #rinstr d
 
     (* memory *)
     val store = storeOf d
     (* LR.W/LR.D call no recordLoad; a successful LR sets ReserveLoad to
        its address and leaves memory unchanged, so read the value back. *)
-    val excTaken =
-      case trap of SOME (LogTrap (false, _)) => true | _ => false
     val load =
       if #traceMemReads opts andalso fetched then
         case (decodeRaw raw, riscv.ReserveLoad ()) of
            (riscv.AMO (riscv.LR_W _), SOME a) =>
-              if excTaken then NONE else SOME (u a, 4, readLE (u a, 4))
+              if Option.isSome trap then NONE else SOME (u a, 4, readLE (u a, 4))
          | (riscv.AMO (riscv.LR_D _), SOME a) =>
-              if excTaken then NONE else SOME (u a, 8, readLE (u a, 8))
+              if Option.isSome trap then NONE else SOME (u a, 8, readLE (u a, 8))
          | (i, _) =>
              (case (loadWidth i, #addr d, #data1 d) of
                  (SOME w, SOME a, SOME v) => SOME (u a, w, bitsOf (u v, 8 * w - 1, 0))
@@ -705,21 +726,23 @@ fun stepTraced (opts : options, n : IntInf.int) : stepInfo =
             [" mw[" ^ hex16 a ^ "]=0x" ^ hexDigits (2 * w) (readLE (a, w))]
         | NONE => []) @
       (case trap of
-          SOME (LogTrap (false, c)) =>
-            " trap=" ^ Int.toString c ::
-            (if addrExc then [field ("tval", u (#mbadaddr (riscv.MCSR ())))]
-             else [])
-        | SOME (LogTrap (true, c)) => [" intr=" ^ Int.toString c]
+          SOME (LogTrap (false, c, toS)) =>
+            [" trap=" ^ Int.toString c,
+             field ("tval", u (if toS then #stval (riscv.SCSR ())
+                               else #mtval (riscv.MCSR ())))]
+        | SOME (LogTrap (true, c, _)) => [" intr=" ^ Int.toString c]
         | _ => [])
     val comment =
       if not (#asm opts) then ""
       else if fetched then "  # " ^ asmOf raw
+      else if interrupt then "  # interrupt"
       else "  # fetch failed"
   in
     oprint (String.concat
               (["S ", IntInf.toString n, " pc=", hex16 (u pc),
                 " inst=", if fetched then rawHex raw else "-"] @
                fields @ [comment, "\n"]));
+    tickMtime ();
     {trapped = Option.isSome trap, store = store}
   end
 
@@ -842,7 +865,8 @@ fun run (opts : options) =
           val steps = IntInf.toString (n + 1)
           val trapRun = if #trapped info then trapRun + 1 else 0
         in
-          (* the model's own HTIF: Next polls the mtohost CSR *)
+          (* the model's termination flag (nothing in the model sets it: HTIF
+             belongs to the emulator) *)
           if !riscv.done then htifExit (Nat.toInt (riscv.exitCode ()), steps)
           else ();
           (* memory-mapped tohost *)

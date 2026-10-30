@@ -72,10 +72,11 @@ build/int.elf: tests/int.S tests/test.h tests/link.ld | build
 build/rvc.elf: tests/rvc.S tests/test.h tests/link.ld | build
 	$(RVCC) $(RVFLAGS) -march=rv64imac -mabi=lp64 -o $@ $<
 
+# FS resets to Off (as in sail-riscv), so the test enables FP first
 build/fp.elf: tests/fp.S tests/test.h tests/link.ld | build
-	$(RVCC) $(RVFLAGS) -march=rv64imafd -mabi=lp64d -o $@ $<
+	$(RVCC) $(RVFLAGS) -march=rv64imafd_zicsr -mabi=lp64d -DENABLE_FS -o $@ $<
 
-# fp.S with mstatus.FS switched on, for comparison with sail (make compare)
+# the same program as fp.elf, under the name make compare uses
 build/fp_fs.elf: tests/fp.S tests/test.h tests/link.ld | build
 	$(RVCC) $(RVFLAGS) -march=rv64imafd_zicsr -mabi=lp64d -DENABLE_FS -o $@ $<
 
@@ -104,7 +105,7 @@ test: riscv-sim $(TEST_ELFS)
 	$(call expect,4,./riscv-sim --no-c --max-insts 10000 build/rvc.elf)
 	$(call expect,2,./riscv-sim --max-insts 10 build/int.elf)
 	@# the trace of the integer test must not change; CSR fields are left
-	@# out (the model's timer sets mip at step 200), as is the disassembly.
+	@# out (make compare checks them), as is the disassembly.
 	@# tests/int.trace.expected is also sail's trace, normalised.
 	./riscv-sim --trace --no-asm build/int.elf 2>/dev/null | grep '^S ' \
 	  | sed 's/ csr\[[^]]*\]=0x[0-9a-f]*//g' > build/int.trace
@@ -117,8 +118,8 @@ test: riscv-sim $(TEST_ELFS)
 # Comparison with sail-riscv
 # ---------------------------------------------------------------------------
 
-# int and rvc must agree with sail; fp_fs is expected to diverge while the
-# model's mstatus is priv 1.7 and FP exception flags are not modelled.
+# int and rvc must agree with sail; fp_fs is expected to diverge while FLD
+# does not set mstatus.FS to Dirty and FP exception flags are not modelled.
 compare: riscv-sim build/int.elf build/rvc.elf build/fp_fs.elf
 	@test -x "$(SAIL)" || { echo "no sail_riscv_sim at $(SAIL); set SAIL" >&2; exit 1; }
 	$(PYTHON) compare.py --sail "$(SAIL)" build/int.elf
