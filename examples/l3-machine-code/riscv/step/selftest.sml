@@ -116,7 +116,9 @@ fun decoded h =
                   | NONE => outer)
        | _ => outer
   in
-    (outer, if List.null args then outer else inner)
+    (outer,
+     if List.null args orelse Lib.mem outer ["FENCE", "FENCE_I"] then outer
+     else inner)
   end
 
 fun class_of (outer, inner) =
@@ -681,10 +683,21 @@ val () =
              then String.substring (name, 0, String.size name - 4)
            else name
          val rms = if Lib.mem base rounding then [SOME 0, SOME 7] else [NONE]
+         (* a 32-bit entry is named after the instruction it decodes to *)
+         fun named h =
+           String.isPrefix "RVC_" name orelse
+           (case decoded h of
+               (_, inner) => inner = base orelse
+                             (fail (name ^ " " ^ h ^ " decodes to " ^ inner)
+                             ; false))
          fun go rm k =
            if k = 0 then fail (name ^ ": no non-vacuous encoding found")
-           else if test name (instantiate rm pat) then ()
-           else go rm (k - 1)
+           else
+             let
+               val h = instantiate rm pat
+             in
+               if not (named h) orelse test name h then () else go rm (k - 1)
+             end
        in
          List.app (fn rm => go rm 8) rms
        end)
