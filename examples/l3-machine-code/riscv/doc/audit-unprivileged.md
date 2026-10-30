@@ -203,6 +203,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
   The other nine classes are correct for S and D, including the sNaN cases.
 - **Fix:** `ret<9> <- FP32_IsNan(val) and not FP32_IsSignalingNan(val)`, and the same with
   FP64 in FCLASS_D.
+- **Resolution:** 8d0bc60b4 (the proposed fix).
 
 #### F3. A failed SC.W/SC.D leaves the reservation in place
 
@@ -290,6 +291,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
 - **Fix:** Change line 3180 to `writeFPRS(rd, val)` and line 3630 to `writeFPRD(rd, val)`. Keep
   the `recordLoad` calls; they overwrite Delta.data1 with the same value. FLW is NaN-boxed only
   once F7 makes writeFPRS box, so land F5 and F7 together.
+- **Resolution:** 5af52ddeb (the proposed fix; C.FLD/C.FLDSP decode to FLD and are covered).
 
 #### F6. FCVT.WU.S and FCVT.WU.D zero-extend the 32-bit result
 
@@ -325,6 +327,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
   ; writeRD(rd, SignExtend(res32))
   ```
   Make the same change in FCVT_WU_D, and combine it with the F25 restructuring.
+- **Resolution:** c960e321b (`res` is now 32 bits and sign-extended at `writeRD`).
 
 #### F7. Single-precision values are neither NaN-boxed on write nor unboxed on read
 
@@ -389,6 +392,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
   Use `FPRS_raw` in FSW (`data = FPRS(rs2)`, 3194) and FMV_X_S (3520). FLW must go through
   writeFPRS (F5). Apply both halves together: the read-side change alone would turn every
   register written today without boxing into the canonical NaN.
+- **Resolution:** ab004ecb2 (the proposed fix, plus `Delta.data1` records the boxed value); FLW is boxed through the FPRS component.
 
 #### F8. FMIN/FMAX: wrong signed-zero order, sNaN and qNaN handling, and no NV flag
 
@@ -440,6 +444,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
   ; writeFPRS(rd, res)
   }
   ```
+- **Resolution:** cef25b0fa (the proposed fix).
 
 #### F9. The FMA family is not fused, and FNMADD/FNMSUB negate the rounded result
 
@@ -496,6 +501,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
   Then accrue the returned flags (F11), add the explicit ∞×0 check (F12), and canonicalise the
   value (F10). Negating the operands rather than the result also stops a NaN result from having
   its sign flipped.
+- **Resolution:** e40dd7ee2 (the proposed `MulAdd_` calls, flags accrued: F11's part for the FMA family).
 
 #### F10. NaN results are not the canonical NaN
 
@@ -547,6 +553,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
 
   Do not wrap FSGNJ\*, FMV\*, FLW/FLD/FSW/FSD: those are defined to be bit-exact. Doing this in
   the spec also makes the HOL next-state value concrete (F27).
+- **Resolution:** a88125e3d (`canonS`/`canonD`); FCVT.D.S raises NV on an sNaN since d40724833 (F11).
 
 #### F11. No F/D instruction other than FEQ/FLT/FLE ever sets fflags
 
@@ -630,6 +637,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
     rounding (SoftFloat's 8086-SSE specialisation uses `afterRounding`). So UF agrees between
     the two exports.
   - Do not use `setFP_Underflow`/`setFP_Inexact` until F18 is fixed.
+- **Resolution:** d40724833 (`accrueFlags`; FMA family in e40dd7ee2). FSQRT accrues no flag for a quiet NaN input, because HOL's `float_sqrt` raises NV for a negative one. Float-to-int NV/NX and int-to-float NX are computed in the spec, as L3's SML `toInt`/`fromInt` return no flags.
 
 #### F12. The FMA family raises no NV for ∞×0 + qNaN
 
@@ -659,6 +667,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
   `when ((a == FP32_PosInf or a == FP32_NegInf) and FP32_IsZero(b)) or (FP32_IsZero(a) and (b == FP32_PosInf or b == FP32_NegInf)) do setFP_Invalid()`.
   Use FP64 for the D forms, with a and b being the multiplicands after the F9 negation. Then
   apply F9, F10 and F11.
+- **Resolution:** 73fd68ae8 (the proposed check, as `FP32_InfTimesZero`/`FP64_InfTimesZero`).
 
 #### F13. Rounding mode RMM raises illegal instruction
 
@@ -711,6 +720,7 @@ enumerates `DecodeRVC`, so F15 is the only fix that touches it.
       exact.
     - Arithmetic and int→float have no cheap exact emulation. Until HOL/L3 support RMM, document
       it as an explicit limitation in the spec.
+- **Resolution:** exact conversions only: 6c8774b88 (FCVT.D.S/D.W/D.WU accept RMM via `validRounding`). Deferred: RMM elsewhere still raises illegal instruction, since neither HOL's binary_ieee nor L3's FP library has roundTiesToAway.
 
 ### 2.2 Missing
 
@@ -871,6 +881,7 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
   0x4 (expected 0x1). Invalid 0x10, DivZero 0x8 and Overflow 0x4 are correct.
 - **Fix:** Line 872 `fcsr.UF <- true` and line 875 `fcsr.NX <- true`, or replace all the helpers
   with `accrueFlags` (F11).
+- **Resolution:** 08bf3ba96 (the proposed fix).
 
 #### F19. Writing fcsr stores the reserved bits 31:8
 
@@ -1051,6 +1062,7 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
             case Some(v) => if v > max then max else if v < min then min else [v] }
   ```
   Combine this with F6 (sign extension of the WU result) and F11 (NV and NX).
+- **Resolution:** a9499320d (`val` matches on the option; the NaN/infinity tests already ran first).
 
 #### F26. The time CSR can go backwards with more than one hart
 
@@ -1101,6 +1113,7 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
     `InvalidOp := F`.
 - **Fix:** F10 (canonicalise in the spec), F13 (RMM) and F12 (explicit NV check). No further
   change is needed.
+- **Resolution:** NaN results by F10 (a88125e3d) at the spec level; RMM deferred with F13. Batch B also found that HOL's `convert` and `int_to_fp*` get the sign of a zero result wrong (FCVT.S.D/FCVT.D.S of -0.0 give +0.0, FCVT.S.D of a tiny negative gives +0.0, int-to-float of 0 under RDN gives -0.0); not fixed.
 
 #### F28. Misaligned loads and stores always complete, but plan WP2.5 says they trap
 
@@ -1153,6 +1166,7 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
   j = (i >> 1) | (i & 1) and doubling the result. Keeping the low bit as a sticky bit
   (round-to-odd) preserves rounding in every mode, and the doubling is exact. Alternatively,
   keep a patched `FP32.sml` beside the harness, or use a softfloat binding.
+- **Resolution:** 14710aca4, in the spec: under `not PROVER_EXPORT`, x >= 2^63 is converted as x/2 rounded to odd, times 2; the HOL export is alpha-equivalent. The audit missed that FP64.fromInt also misrounds values below -2^62 in RDN/RUP (FCVT.D.L): deb792f21.
 
 #### F30. The stock PolySSE FP64 FFI returns garbage under Poly/ML 5.9.2
 
