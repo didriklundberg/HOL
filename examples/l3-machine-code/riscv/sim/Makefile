@@ -102,13 +102,16 @@ build/fail.elf: tests/fail.S tests/test.h tests/link.ld | build
 # like the smoke tests; the FP ones set mstatus.FS themselves (fsoff-all
 # relies on its reset value, Off).
 FP_REGRESS = fsoff-all fp-arith fp-conv fp-rmm
-REGRESS    = $(FP_REGRESS) batch-a
+REGRESS    = $(FP_REGRESS) batch-a smode
 
 $(FP_REGRESS:%=build/%.elf): build/%.elf: tests/%.S tests/test.h tests/fpmacros.h tests/link.ld | build
 	$(RVCC) $(RVFLAGS) -march=rv64imafdc_zicsr -mabi=lp64d -o $@ $<
 
 build/batch-a.elf: tests/batch-a.S tests/test.h tests/link.ld | build
 	$(RVCC) $(RVFLAGS) -march=rv64imac -mabi=lp64 -o $@ $<
+
+build/smode.elf: tests/smode.S tests/test.h tests/link.ld | build
+	$(RVCC) $(RVFLAGS) -march=rv64im_zicsr -mabi=lp64 -o $@ $<
 
 TEST_ELFS = build/int.elf build/rvc.elf build/fp.elf build/fail.elf \
             $(REGRESS:%=build/%.elf)
@@ -136,7 +139,7 @@ test: riscv-sim $(TEST_ELFS)
 	$(call expect,4,./riscv-sim --no-c --max-insts 10000 build/rvc.elf)
 	$(call expect,2,./riscv-sim --max-insts 10 build/int.elf)
 	@# regression programs: exit 0 and sail's signature
-	@for t in fsoff-all fp-arith fp-conv batch-a; do \
+	@for t in fsoff-all fp-arith fp-conv batch-a smode; do \
 	  echo "--- ./riscv-sim --max-insts 100000 --signature build/$$t.sig build/$$t.elf"; \
 	  ./riscv-sim --max-insts 100000 --signature build/$$t.sig build/$$t.elf; s=$$?; \
 	  if [ $$s -ne 0 ]; then echo "FAILED: exit status $$s, expected 0"; exit 1; fi; \
@@ -173,7 +176,7 @@ check-sail:
 	  { echo "no sail configuration $(SAIL_CONFIG); set SAIL_CONFIG" >&2; exit 1; }
 
 # int, rvc and fp_fs must agree with sail (in its built-in configuration);
-# fsoff-all and batch-a with SAIL_CONFIG, fp-arith and fp-conv also,
+# fsoff-all, batch-a and smode with SAIL_CONFIG, fp-arith and fp-conv also,
 # with --ignore-csr fcsr (README.md, compare.py).  fp-rmm must diverge,
 # and first at its fadd.s with rmm, which sail rounds and the model makes
 # illegal (audit F13, deferred).
@@ -183,6 +186,7 @@ compare: riscv-sim build/int.elf build/rvc.elf build/fp_fs.elf $(REGRESS:%=build
 	$(PYTHON) compare.py --sail "$(SAIL)" build/fp_fs.elf
 	$(PYTHON) compare.py $(SAIL_FLAGS) build/fsoff-all.elf
 	$(PYTHON) compare.py $(SAIL_FLAGS) build/batch-a.elf
+	$(PYTHON) compare.py $(SAIL_FLAGS) build/smode.elf
 	$(PYTHON) compare.py $(SAIL_FLAGS) --ignore-csr fcsr build/fp-arith.elf
 	$(PYTHON) compare.py $(SAIL_FLAGS) --ignore-csr fcsr build/fp-conv.elf
 	@echo '--- compare.py $(SAIL_FLAGS) --ignore-csr fcsr --max-divergences 1 build/fp-rmm.elf'

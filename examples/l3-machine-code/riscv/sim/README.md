@@ -365,7 +365,13 @@ the smoke tests and on `rv64uf-p-fadd` from riscv-tests:
   `handling int#...` mark an interrupt. The cause is the value sail then
   logs for `mcause` (or `scause`).
 - `ret-ing from ...` and WFI/WRS wait messages are ignored; any other line is
-  reported on stderr and ignored.
+  reported on stderr and ignored. With `wfi_is_nop` false and
+  `max_time_to_wait` 0, as in `rv64gc_mu_pmp.json`, a WFI that does not
+  trap at once is still one block: its instruction line, `entering
+  WAIT-WFI state ...`, then `interrupt exit ...` or `forced exit ...` and
+  what the exit does (retire, or an illegal-instruction trap in S-mode
+  with `mstatus.TW` set), like the model's one step
+  (`../doc/design-smode.md` §2.11).
 - A block without an instruction line (failed fetch) gets `inst=-` and the
   pc from the `mepc` write.
 
@@ -424,8 +430,9 @@ instructions illegal. `build/fp.elf` (for `make test`) and
 
 ## Regression programs
 
-Programs written while fixing the model, kept in `tests/` because each
-found a bug or pins down a known divergence. They use `test.h` like the
+Programs written while fixing or extending the model, kept in `tests/`
+because each found a bug, pins down a known divergence, or covers what no
+riscv-test does. They use `test.h` like the
 smoke tests (the FP ones through `fpmacros.h`, which also stores and clears
 `fflags` after every case), are built by the Makefile into `build/`, and
 are checked by `make test` (riscv-sim alone) and `make compare` (against
@@ -438,6 +445,7 @@ sail with `SAIL_CONFIG`). The expected signatures are sail's.
 | `fp-conv.S` (rv64imafdc) | every FCVT direction with saturating, boundary and tie inputs, FCVT.S.D/D.S special values, NaN-boxing round trips, `fcsr` reads | exit 0, `fp-conv.sig.expected` | agree with `--ignore-csr fcsr` |
 | `fp-rmm.S` (rv64imafdc) | RMM in the exact conversions FCVT.D.S/D.W/D.WU, which must agree, then `fadd.s` with RMM at label `rmm_fadd` (audit F13, deferred): the model raises illegal instruction, sail rounds | the first trap is illegal instruction at `rmm_fadd`; exit 4 (trap loop at `mtvec` = 0) | the first divergence is the step at `rmm_fadd` |
 | `batch-a.S` (rv64imac) | LR/SC reservation after a failed SC (F3), AMOMIN/MAX[U].W with junk in `rs2<63:32>` (F4), C.ADDIW (F15), DIV/REM/REMU with `rd` aliasing a source, x/0 and MIN/-1 (F20) | exit 0, `batch-a.sig.expected` | agree |
+| `smode.S` (rv64im_zicsr) | S-mode execution (WP7, `../doc/design-smode.md` §2): MRET and SRET into S-mode and U-mode, ECALL from S-mode taken in M-mode and, delegated, in S-mode, the `medeleg`/`mideleg` masks, `sie`/`sip` through `mideleg`, SSIP set by M-mode and taken in S-mode with `stvec` Direct and Vectored, an undelegated SSI in S-mode and a delegated one in U-mode, SRET under TSR, WFI under TW (also with SSIP pending and enabled while SIE is clear), counter enables from S-mode and U-mode, `scause` WLRL, `stval` of an illegal instruction in S-mode, `satp` and SFENCE.VMA under TVM | exit 0, `smode.sig.expected` (100 checks) | agree |
 
 The FP programs set `mstatus.FS` themselves (`ENABLE_FP` in `fpmacros.h`);
 `fsoff-all` relies on its reset value, Off. `fp-arith` and `fp-conv` need
