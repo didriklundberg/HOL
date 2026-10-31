@@ -1,6 +1,6 @@
 # Privileged architecture design for the L3 RISC-V model (priv 1.13, M/U + PMP)
 
-**Scope.** This document specifies how the privileged parts of HOL4's L3 RISC-V model (`examples/l3-machine-code/riscv/src/riscv.spec`, branch `riscv-l3`) are rewritten from privileged spec 1.7 to **Machine-Level ISA 1.13 and Supervisor-Level ISA 1.13 of the privileged specification version 20260120**. The target is one RV64-only hart (MXLEN = SXLEN = UXLEN = 64), with extensions **I M A F D C Zicsr Zifencei Zicntr** (RV64GC), **M-mode and U-mode executed and validated**, and **physical memory protection (PMP)** with 16 entries. **S-mode is present only as storage**: `misa.S = 1`, every S-mode CSR exists with 1.13 numbering and legalisation, `medeleg`/`mideleg`/`sret` are implemented as specified, but S-mode execution is outside the validated scope. Nothing here may need rework when S-mode and Sv39/Sv48 are added later (plan WP7). Not implemented: H, V, Sv* translation (`satp` accepts only Bare), debug mode and triggers, NMI/Smrnmi, Sstc, Sscofpmf, Smstateen, Smepmp, Smdbltrp/Ssdbltrp, Zicfilp/Zicfiss, Zihpm, Zkr. Fields of those extensions appear only as read-only zero. The document fixes behaviour; it does not design L3 code, but names the existing L3 functions each rule replaces.
+**Scope.** This document specifies how the privileged parts of HOL4's L3 RISC-V model (`examples/l3-machine-code/riscv/src/riscv.spec`, branch `riscv-l3`) are rewritten from privileged spec 1.7 to **Machine-Level ISA 1.13 and Supervisor-Level ISA 1.13 of the privileged specification version 20260120**. The target is one RV64-only hart (MXLEN = SXLEN = UXLEN = 64), with extensions **I M A F D C Zicsr Zifencei Zicntr** (RV64GC), **M-mode and U-mode executed and validated**, and **physical memory protection (PMP)** with 16 entries. **S-mode is present only as storage**: `misa.S = 1`, every S-mode CSR exists with 1.13 numbering and legalisation, `medeleg`/`mideleg`/`sret` are implemented as specified, but S-mode execution is outside the validated scope. Nothing here may need rework when S-mode and Sv39/Sv48 are added later (plan WP7). *WP7 amendment:* `design-smode.md` validates S-mode execution (its stage 1) and adds Sv39/Sv48/Sv57 translation; it revises the decisions it names ([D5], [D21], [D23], [D32], [D46]), and this document stays in force for everything else. Not implemented: H, V, Sv* translation (`satp` accepts only Bare), debug mode and triggers, NMI/Smrnmi, Sstc, Sscofpmf, Smstateen, Smepmp, Smdbltrp/Ssdbltrp, Zicfilp/Zicfiss, Zihpm, Zkr. Fields of those extensions appear only as read-only zero. The document fixes behaviour; it does not design L3 code, but names the existing L3 functions each rule replaces.
 
 ## 0. Conventions
 
@@ -398,10 +398,10 @@ This replaces `checkInterrupts`' `curIE = MCSR.mstatus.MIE` (L3 1531-1533). The 
 
 #### 2.3.7 TVM, TW, TSR (P §3.1.6.6 p.37)
 
-| Bit | Effect when 1 | In M | In U | In S (unvalidated) |
+| Bit | Effect when 1 | In M | In U | In S (validated by WP7) |
 |---|---|---|---|---|
 | TVM | `satp` accesses and SFENCE.VMA are illegal | none | none (already illegal by privilege) | illegal |
-| TW | WFI illegal if not complete within bounded time | none (WFI is a NOP, [D23]) | WFI **always** illegal, regardless of TW, because S is implemented (p.37) | illegal immediately when TW = 1; NOP when TW = 0 |
+| TW | WFI illegal if not complete within bounded time | none (WFI is a NOP, [D23]) | WFI **always** illegal, regardless of TW, because S is implemented (p.37) | the time limit is zero: illegal when TW = 1 and no interrupt is pending and enabled in `mie` (`read_mip() && mie = 0`), else a NOP; NOP when TW = 0 ([S20], revising [D23]) |
 | TSR | SRET illegal | none: **SRET in M is legal whatever TSR is** (p.37: "while executing in S-mode"; R11) | SRET always illegal | illegal |
 
 #### 2.3.8 UXL, SXL (P §3.1.6.3 p.34; §12.1.1.1 p.114)
@@ -812,7 +812,7 @@ ExcDest(code, y) = if y ≠ M ∧ medeleg[code] = 1 then S else M        (P §3.
 - Traps never go to a less-privileged mode: from M everything goes to M even if delegated (p.42). Horizontal S→S traps are taken.
 - `medeleg[11]` = `medeleg[16]` = 0, so ECALL from M and double trap always go to M.
 - sail additionally requires `currentlyEnabled(Ext_S)`; always true here (`misa.S` read-only 1). If `misa.S` were ever writable and cleared, `medeleg`/`mideleg` must behave as 0.
-- With `medeleg = 0` (reset; S3K never writes it), every exception goes to M. S is entered only via delegation set by software or MRET with `MPP = S`; both are implemented as specified but outside the validated scope.
+- With `medeleg = 0` (reset; S3K never writes it), every exception goes to M. S is entered only via delegation set by software or MRET with `MPP = S`; both are implemented as specified, and validated by WP7 (`design-smode.md` §2.7, `sim/tests/smode.S`).
 - Non-recursive, so `checkDelegation.sml` (HOL termination helper) goes.
 
 ### 4.5 Interrupt selection and its place in `Next`
@@ -855,7 +855,7 @@ Replaces `takeTrap` (L3 1557–1593) and `pushPrivilegeStack` (L3 617).
 7. `setPrivilege(Machine)`.
 8. `PC := TrapVector(mtvec, intr, code)`.
 
-**Into S** (unvalidated; `y ∈ {U, S}` by §4.4; P §3.1.8 p.42, §12.1.1 p.113–114):
+**Into S** (validated by WP7, `design-smode.md` §2.9; `y ∈ {U, S}` by §4.4; P §3.1.8 p.42, §12.1.1 p.113–114):
 1. `scause := (intr ? 1 : 0) << 63 || ZeroExtend(code)`.
 2. `sepc := epc`.
 3. `stval := tval`.
@@ -909,15 +909,17 @@ SIE, SPIE, SPP, `mcause` unchanged; no MDT/SDT/ELP handling.
 
 Next-PC plumbing: keep `NextFetch`/`TransferControl`; `Ereturn` → `Mret`/`Sret` ([D8]); delete `Mrts` and `popPrivilegeStack` (L3 606).
 
-#### 4.7.6 WFI (P §3.3.3 p.61–62, §3.1.6.6 p.37) ([D23])
+#### 4.7.6 WFI (P §3.3.3 p.61–62, §3.1.6.6 p.37) ([D23], [S20])
 
 | Mode | Result |
 |---|---|
 | M | NOP: retires, `PC := PC + 4`; a pending interrupt is taken at the next step with `mepc = pc + 4` |
-| S | illegal if `TW = 1`, else NOP |
+| S | `TW = 1`: illegal iff no interrupt is pending and enabled in `mie` (`read_mip() && mie = 0`), else NOP; `TW = 0`: NOP |
 | U | **always illegal** (S is implemented; the bounded time limit is chosen as 0) |
 
-Illegal `tval = 0x10500073`. sail cfg: `platform.wfi_is_nop = true`, `wfi_available_to_user_mode = false`.
+Illegal `tval = 0x10500073`. sail cfg: `platform.wfi_is_nop = false`, `platform.max_time_to_wait = 0`, `wfi_available_to_user_mode = false`.
+
+*WP7 amendment ([S20], `design-smode.md` §2.11).* The S row was "illegal if `TW = 1`, else NOP", which p.37 also allows, but it differs from sail when an interrupt is pending and enabled in `mie` while the global enable (SIE) or `mideleg` keeps it from being taken. With a zero time limit, a WFI completes at once exactly when such a locally enabled interrupt is pending: "the hart must resume if a locally enabled interrupt becomes pending, even if it has been delegated" (p.62), whatever MIE, SIE and `mideleg` are. sail does the same with the cfg above: its first `try_step` enters the wait state, and the second retires the WFI or, in S with `TW = 1` and no locally enabled interrupt pending, raises the illegal instruction (`shouldWakeForInterrupt`). Both belong to one step of its trace, which advances `mtime` and `mcycle` once, as the model's one-step NOP does (checked on sail), and `compare.py` ignores the wait messages. With the earlier `wfi_is_nop = true`, sail retired S-mode WFI whatever TW was. M and U are unchanged.
 
 #### 4.7.7 SFENCE.VMA (P §12.2.1 p.127–130, §3.1.6.6 p.37, §12.9 p.143) ([D46])
 
@@ -929,6 +931,8 @@ Illegal `tval = 0x10500073`. sail cfg: `platform.wfi_is_nop = true`, `wfi_availa
 | M | no-op, retires |
 
 `rs1`/`rs2` are read and ignored; an invalid VA raises nothing (p.128); no translation caches. Replaces `SFENCE_VM` (L3 4209) and the TLB code. p.130 also permits illegal-everywhere when `satp.MODE` is read-only zero; sail's default `extensions.Svbare.sfence_vma_illegal_if_svbare_only = true` does that, so cfg sets it to `false`.
+
+*WP7 amendment ([S4], `design-smode.md` §2.13).* WP7 keeps this legality; the S-mode rows are validated by `sim/tests/smode.S`.
 
 ### 4.8 Absent features
 
@@ -1338,7 +1342,8 @@ Settings this design requires, from all chapters. "Change" marks a difference fr
 | `extensions.Zicntr.supported` | true | | |
 | `extensions.Sv39/Sv48/Sv57.supported` | false; `Svbare` true | Bare only (SUM RO0) | present |
 | `extensions.Svbare.sfence_vma_illegal_if_svbare_only` | false | [D46] | present (change from default) |
-| `platform.wfi_is_nop` | true | [D23] | present (change from default) |
+| `platform.wfi_is_nop` | false | [D23], [S20] | default (WP7; `true` before) |
+| `platform.max_time_to_wait` | 0 | [S20] | **change** (WP7; default 10) |
 | `platform.wfi_available_to_user_mode` | false | [D23] | default |
 | `platform.instructions_per_tick` | 1 | [D63] | **change** (default 2) |
 | `platform.simple_interrupt_generator.supported` | false | [D73] | **change** |
@@ -1391,7 +1396,7 @@ Each row merges the decision items of the source analyses that cover the same ch
 | D20 † | `mstatus` storage of SD and constants (§2.3.4) | (a) store writable fields only, build constants and SD on read; (b) store the full image, keep SD consistent by invariant | (a) | arbitrary HOL states could otherwise read illegal `mstatus` values; Dirty update becomes the single assignment `FS := 3`; SD is read-only derived (p.40) | (b) |
 | D21 | S-related `mstatus` fields; SUM (§2.3.1) | (a) SIE, SPIE, SPP, MXR, TVM, TSR writable storage, SUM RO0; (b) all RO0 | (a) | with `misa.S = 1` RO0 is forbidden for these (p.32, p.35, p.37); SUM RO0 because `satp.MODE` is read-only 0 (p.35, p.114, p.125); WP7 adds one mask bit | (a) |
 | D22 | Scope of the MPRV rule (§2.3.6) | (a) literal: every explicit data access, any mode; (b) only when `cur = M` | (a), with invariant `cur ≠ M ⇒ MPRV = 0` documented | spec wording (p.35) and sail `effectivePrivilege`; equal on reachable states; H2 discharges it in M-mode theorems | (a) |
-| D23 | WFI per mode (§4.7.6) | M: NOP or wait; U: always illegal (forced, p.37) or NOP; S: illegal iff TW = 1, or wait then trap | M NOP; U always illegal; S illegal iff TW = 1, else NOP; cfg `wfi_is_nop = true` | NOP is legal (p.62); deterministic; p.37 allows immediate trap with TW = 1 | `wfi_is_nop = false`, `wfi_available_to_user_mode = false`; with `wfi_is_nop = true` sail retires S-mode WFI even with TW = 1 (open question 12) |
+| D23 | WFI per mode (§4.7.6) | M: NOP or wait; U: always illegal (forced, p.37) or NOP; S: illegal iff TW = 1, or wait then trap | M NOP; U always illegal; S illegal iff TW = 1, else NOP; cfg `wfi_is_nop = true`. **Revised by WP7 [S20]**: S with TW = 1 is illegal iff `read_mip() && mie = 0`, else NOP; cfg `wfi_is_nop = false`, `max_time_to_wait = 0` (§4.7.6) | NOP is legal (p.62); deterministic; p.37 allows immediate trap with TW = 1 | `wfi_is_nop = false`, `wfi_available_to_user_mode = false`; with `wfi_is_nop = true` sail retires S-mode WFI even with TW = 1 (open question 12) |
 | D24 | Access to a non-existent CSR (§3.1) | (a) illegal instruction; (b) `#UNDEFINED` | (a), from a whitelist checked before any read | always valid for reserved encodings (P §2.1 p.13); plan §2.2(4) forbids `#UNDEFINED` on reachable states | illegal (`postlude/csr_end.sail:12`) |
 | D25 † | `hpmcounter3–31` (§6.3) | (a) Zihpm absent: illegal in all modes; (b) RO0 counters, readable in M | (a) | U-mode behaviour identical (counteren HPM bits RO0); U §4.4 p.68 allows trap; smaller CSR map; matches cfg; corrects plan Appendix A | default Zihpm on; cfg off |
 | D26 | `mhpmcounter3–31`, `mhpmevent3–31` (§6.3) | (a) present, RO0, writes ignored; (b) illegal; (c) real counters | (a) | "a legal implementation is to make both … read-only 0" (P §3.1.10 p.46); standard M CSRs must not trap | always accessible; writes dropped with `writable_hpm_counters = 0` |
@@ -1414,7 +1419,7 @@ Each row merges the decision items of the source analyses that cover the same ch
 | D43 | `mtval`/`stval` contents (§4.2) | illegal instruction: instruction bits or 0; EBREAK: `pc` or 0; misaligned/access fault: address or 0 | instruction bits (16 or 32, zero-extended); `pc`; faulting address (fetch: parcel) | matches sail defaults; useful to handlers; all permitted (p.52–53) | all `xtval_nonzero.*` true |
 | D44 | `mepc`/`sepc` storage and IALIGN masking (§4.1.5) | (a) store 63:1, mask bit 1 on read when `misa.C = 0`; (b) mask at write with current C (current L3); (c) truncate to PABITS | (a) | p.48 requires bit 1 to stay writable while masked; (b) violates it | (a) (`legalize_xepc`, `align_pc`) |
 | D45 | LR reservation on trap entry/xRET (§4.6) | (a) keep; (b) clear on trap (current L3); (c) clear on xRET too | (a) | not required (p.61; U p.118); trace equality | no cancel on trap or xRET |
-| D46 | SFENCE.VMA with Bare only (§4.7.7) | (a) decoded; NOP in M and S (TVM = 0); illegal in U and S (TVM = 1); (b) illegal everywhere (p.130) | (a), cfg `sfence_vma_illegal_if_svbare_only = false` | WP7 adds Sv39 without changing legality; plan WP2.4 | (b) |
+| D46 | SFENCE.VMA with Bare only (§4.7.7) | (a) decoded; NOP in M and S (TVM = 0); illegal in U and S (TVM = 1); (b) illegal everywhere (p.130) | (a), cfg `sfence_vma_illegal_if_svbare_only = false`. Kept by WP7 [S4], validated in S-mode (§4.7.7) | WP7 adds Sv39 without changing legality; plan WP2.4 | (b) |
 | D47 | Number of PMP entries (§5.1) | 0, 16, 64, or 64 with 16 usable; spec constant or runtime parameter | 16, all usable, as one spec constant `PMP_COUNT ∈ {0,16,64}`; HOL instantiates 16 | sail default; S3K uses 8; fixed bound keeps the loop unrollable; 64 quadruples state; only 0/16/64 allowed (p.70) | 16 / 16 |
 | D48 † | PMP grain G (§5.2.2) | (a) G = 0; (b) G = 1 (no partial matches for aligned ≤ 8-byte accesses); (c) larger | (a), with H4 in the M-mode contract | sail default, plan WP0.2, arch tests probe G and use NA4; no read-view masking; the HOL cost of (a) is one word conjunct (§1.5) | `grain = 0` |
 | D49 † | `pmpcfg` write with R = 0, W = 1 (§5.2.3) | (a) R = W = X = 0, keep L and A; (b) R = W = 0 keep X (plan text); (c) ignore the byte; (d) R = W = 1; (e) fatal | (a); amend plan WP2.5 | matches sail exactly; least privilege; keeps W ⇒ R; only a legal value is required (p.71, p.58) | `PMP_ClearPermissions` |
@@ -1460,7 +1465,7 @@ Each row merges the decision items of the source analyses that cover the same ch
 9. **No-interrupt hypothesis in U mode.** Every U-mode step theorem needs `SelectInterrupt() = None` (M-level interrupts are enabled in U regardless of MIE). Can HolBA take this as a global assumption (e.g. `mie = 0` or platform inputs false in lifted code), or must interrupt steps be lifted?
 10. **fflags dirty policy.** [D17] depends on WP1: L3 currently accrues only NV on compares, and `setFP_Underflow`/`setFP_Inexact` set OF. When WP1 adds flag accrual as a single OR, decide whether to keep `Fflags_Dirty_Flag` or move both L3 and sail to `Precise`.
 11. **Writable `misa.C`.** Is dynamic C needed by HolBA/S3K, or would a build-time choice suffice? Read-only C removes the `pc<1>` suppression and the read-side `xepc` masking.
-12. **Leaving validated scope; S-mode WFI.** Should the harness flag any entry into S (MRET with `MPP = S`, SRET from M, delegated traps) so later trace differences are not counted as regressions? Before WP7 validates S, settle WFI in S with TW = 1: this design traps, sail with `wfi_is_nop = true` retires it.
+12. **Leaving validated scope; S-mode WFI.** Should the harness flag any entry into S (MRET with `MPP = S`, SRET from M, delegated traps) so later trace differences are not counted as regressions? Before WP7 validates S, settle WFI in S with TW = 1: this design traps, sail with `wfi_is_nop = true` retires it. *Closed by WP7*: there is no such flag ([S26]): S-mode is validated, so a divergence after an entry into S is a regression or an expected outcome recorded in `sim/tests/corpus.expected`. WFI in S with TW = 1 traps iff no interrupt is pending and enabled in `mie`, which sail reproduces with `wfi_is_nop = false` and `max_time_to_wait = 0` ([S20], §4.7.6).
 13. **HolBA and the timer.** Under [D67] `mtime` at `0x200bff8` and `rdtime` are ordinary memory reads that the lifter treats as constant within a fragment, while real `mtime` advances. Should HolBA mark the CLINT addresses volatile, or exclude S3K's timer functions from the verified set? Is "unconstrained memory read" the intended treatment of `time` (plan open question)?
 14. **Illegal-instruction `mtval` plumbing.** `setTrap` needs the faulting instruction bits ([D43]). Take them from `Delta.rinstr` (in hidden `c_update`) or a new field? This affects which definitions the `NextRISCV_Half_noC` proof needs.
 15. **sail config overlay.** Does the JSON overlay merge partial `base`, `platform` and `memory` objects with the defaults? §6.10 assumes so.
@@ -1470,5 +1475,5 @@ Each row merges the decision items of the source analyses that cover the same ch
 19. **`mcause` legal set.** [D33] mirrors sail (accepting 19 and the page-fault codes) for trace equality. Confirm this is preferred over the minimal set of codes the hart raises.
 20. **Trace format.** Confirm `csrName` prints the 12-bit hex for absent CSRs (sail's fallback) and that the harness's step counter replaces `c_instret` in `log_instruction`.
 21. **Physical addresses ≥ 2^56.** Should the model access-fault there (the RV64 PMP address width) to narrow the gap to sail, or keep all 2^64 addresses as main memory ([D54])?
-22. **SUM read-only zero.** Confirm that no S3K or HolBA code expects to read back `mstatus.SUM = 1` (plan Appendix A lists `satp` as WARL storage, which forces SUM RO0).
+22. **SUM read-only zero.** Confirm that no S3K or HolBA code expects to read back `mstatus.SUM = 1` (plan Appendix A lists `satp` as WARL storage, which forces SUM RO0). *Closed by WP7* ([S19], `design-smode.md` §2.1): SUM must be read-only zero exactly while `satp.MODE` is (p.35, p.114), so it becomes writable in WP7 stage 2, in the commit that makes Sv39 legal, and stays read-only zero until then. S3K does not depend on it: its only `mstatus` access is `csrw mstatus, zero` at `_start`, and it runs no code in S-mode. HolBA gets the SUM field theorems in WP7 stage 4 (`design-smode.md` §1.6).
 23. **Plan amendments.** Approve the corrections this design makes to the plan: WP2.4 (SRET legal in M whatever TSR, R11); WP2.5 (R = W = X = 0, R13; effective-privilege wording [D22]); WP3 (M-mode PMP hypothesis, R12 and §1.5); WP2.2 and Appendix A (`hpmcounter3–31` illegal, `menvcfg.FIOM` writable, `mconfigptr` present, `pmpcfg4..14`/`pmpaddr16..63` illegal, `mtime`/`mtimecmp` memory-backed rather than harness-set state, R5, R14).
