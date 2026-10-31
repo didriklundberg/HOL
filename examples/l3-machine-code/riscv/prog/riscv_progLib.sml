@@ -514,10 +514,14 @@ in
         then raise ERR "riscv_spec" system_msg
       else thm
   end
+  (* The error of riscv_step for a CSR instruction, found in the string of
+     the exception, so that this also builds with HOL versions that have
+     no Feedback.message_of (trindemossen-2). *)
   fun step tm =
     riscv_stepLib.riscv_step tm
-    handle e as HOL_ERR herr =>
-      if String.isPrefix "the CSR number" (Feedback.message_of herr)
+    handle e as HOL_ERR _ =>
+      if String.isSubstring "the CSR number of a CSR instruction"
+           (Feedback.exn_to_string e)
         then raise ERR "riscv_spec" system_msg
       else raise e
   fun riscv_spec tm =
