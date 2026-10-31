@@ -322,7 +322,10 @@ earlier priv-1.7 model; extend them with `--csr-alias`. `sstatus`, `sie`
 and `sip` are views of `mstatus`, `mie` and `mip`; sail logs only the one
 an instruction (or trap entry, or an `xRET`) writes, so when a step's sail
 log has one of a pair and not the other, compare.py forgets sail's value
-of the other, which is stale, until sail logs it again. `mip` and `sip` are
+of the other, which is stale, until sail logs it again. `sie` and `sip`
+also change with `mideleg`, which restricts them, so when sail logs
+`mideleg` without one of them, compare.py forgets its value of that one
+too. `mip` and `sip` are
 ignored by default (`--no-default-ignores` to compare them), because the
 two emulators drive them from timers of their own; both now start with
 `mtimecmp` = 0 and so with MTIP set before the first instruction, and they

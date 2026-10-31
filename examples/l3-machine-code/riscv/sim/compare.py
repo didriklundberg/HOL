@@ -58,6 +58,11 @@ DEFAULT_CSR_IGNORES = ["mip", "sip"]
 # last logged value of the other is stale: compare.py then forgets it.
 CSR_VIEWS = [("sstatus", "mstatus"), ("sie", "mie"), ("sip", "mip")]
 
+# sie and sip are mie and mip restricted to the interrupts delegated in
+# mideleg (priv spec §12.1.3), so a write of mideleg changes them too:
+# when sail logs mideleg but not the view, its value of the view is stale.
+CSR_VIEW_MASKS = [("sie", "mideleg"), ("sip", "mideleg")]
+
 # riscv-sim's first trace line, and its exit status for a bad command line
 # or an ELF it cannot load
 RISCV_SIM_TRACE_HEADER = "# riscv-sim trace v1"
@@ -375,6 +380,9 @@ def compare(model, sail, opts):
             for v, r in CSR_VIEWS:
                 if (v in wb) != (r in wb):
                     s_csr.pop(r if v in wb else v, None)
+            for v, m in CSR_VIEW_MASKS:
+                if m in wb and v not in wb:
+                    s_csr.pop(v, None)
             for c in sorted(set(wa) | set(wb)):
                 if c in ignores:
                     continue
