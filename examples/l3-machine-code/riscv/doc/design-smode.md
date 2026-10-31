@@ -959,6 +959,17 @@ Properties:
   function, are both to be confirmed when the export is generated. The fallback is to spell out
   `case TR_Fault(e) => TR_Fault(e)` and to read `MEM8` byte by byte.
 
+*Stage 2 notes.* (1) L3 needs a type declared before it is used, and `pAddr` (L3 60) and
+`ExceptionType` (L3 214) come after L3 54, so the types cannot stand in the "memory" block: an
+export with `TransResult` there stops with "Bad type: pAddr". Both types open the Address
+Translation section, which now follows the PMP section, because `ptwLevel` calls `pmpCheck`.
+(2) The first arm of the `levels` match is written `3::nat`: without it L3 types `levels` as
+`bits(64)`, from the shifts by `sh`, and the `ptwStep` calls fail to type-check. (3) Q15: L3
+accepts both constructs, so no fallback is used. The HOL export defines `ptePermits`, `ptwLevel`,
+`ptwStep`, `translateAddr`, `fetchAddr` and `dataAddr` as functions of the state that return no
+state (L3's "ok-fun"); `mtime()` already read `MEM` inside a function. `riscvScript.sml` builds
+under HOL develop and `trindemossen-2` with no termination goal.
+
 ### 3.12 Call-site changes (E4)
 
 - **37 `dataAddr` call sites** (L3 2418-3680: 11 `PMP_Read`, 8 `PMP_Write`, 18 `PMP_ReadWrite`;
@@ -1058,7 +1069,8 @@ This merges the sail-and-corpus proposal with the S-mode WFI settings and Sv57 (
   without the `platform` lines and with Sv57 false. The scratch copy is
   `sail-oracle/wp7-override.json`. Re-validate the merged hunk.
 - **ISA string**: `rv64imafdc_zicntr_zicsr_zifencei_za128rs_za64rs_zca_zcd_zvl32b_zvl64b_zvl128b_zvl256b_ssccptr_ssstrict_ssu64xl_svade`.
-  With Sv57 on, also `sv57`.
+  With Sv57 on, also `sv57`. *Stage 2 note:* with the merged hunk, Sv57 on, sail prints exactly the
+  string above (`--print-isa-string`); it names none of `sv39`, `sv48` and `sv57`.
 - **Constraints the validator enforces** (`validate_config.sail:check_mmu_config`, each probed):
   - Sv48 needs Sv39, and Sv57 needs Sv48 (Sv57 without Sv48 was rejected);
   - Ssccptr, Svade, Svadu and Svvptc each need Sv39;
@@ -1122,7 +1134,7 @@ the scalar suites (ui 54, um 13, ua 19, uf 11, ud 12, uc 1), of which 109 are ex
 | Suite | n | sail with the §4.2 cfg | L3 after WP7: riscv-sim | compare | Expected failures |
 |---|---|---|---|---|---|
 | `rv64u{i,m,a,f,d,c}-p-*` | 110 | 109 | 109 | agree on 110 | `rv64ui-p-ma_data` (misaligned traps, [D55]) |
-| `rv64u{i,m,a,f,d,c}-v-*` | 110 | 109 | **109** | **agree on 110** | `rv64ui-v-ma_data`: the misaligned trap is not delegated and goes to `wtf` (exit 841), as on sail |
+| `rv64u{i,m,a,f,d,c}-v-*` | 110 | 109 | **109** | **agree on 110** (stage 2: 109, see the note below) | `rv64ui-v-ma_data`: the misaligned trap is not delegated and goes to `wtf` (exit 841), as on sail |
 | `rv64si-p-*` | 7 | 7 | **7** (`dirty` and `icache-alias` move from fail/diverge to pass/agree) | agree on 7 | none |
 | `rv64mi-p-*` | 17 | 16 | 16 | agree on 17 | `breakpoint` (Sdtrig) |
 | `rv64ssvnapot-p-napot` | 1 | pass (store page fault in M; the test accepts Svnapot being absent) | pass | agree | none |
@@ -1132,6 +1144,20 @@ the scalar suites (ui 54, um 13, ua 19, uf 11, ud 12, uc 1), of which 109 are ex
 The 110 `-v` tests are the main WP7 acceptance suite. They cover MRET/SRET into S and U, `medeleg`
 8/12/13/15, `stvec`/`sscratch`/`sepc`/`scause`/`stval`, SUM, SFENCE.VMA, Sv39 4 KiB pages and a
 2 MiB superpage, Svade faults, and HTIF from S through a VA.
+
+*Stage 2 note on `rv64ui-v-ma_data`.* The row above is wrong in two ways. The model and sail agree on
+the first 2787 steps: the misaligned load traps (4), is not delegated, and goes to M-mode, whose
+`trap_vector` jumps to `wtf`. But `wtf` runs with U-mode's `sp`, which is 0, and its first store,
+`sd ra, 8(sp)` to 0xfffffffffffffff8, is outside sail's memory map, so sail raises a store access
+fault there and loops until it reports "possible trap loop detected" (the scratch result
+`tlbcmp-results.txt`, rc 1 after 2824 steps, is this loop). The model has no PMA ([D54], Q9), so it
+stores and reaches `terminate(841)`: `tohost` = 841, which HTIF reports as exit code 420. So the
+riscv-sim outcome is "fail: test 420", and compare diverges at step 2787, the store. 109 of the
+110 agree. The corpus also has 63 `-v` tests of the other extensions (`rv64uzba` … `rv64uzicond`,
+`rv64uziccid`), which the table leaves out: 2 pass, the others fail with exit code 420 like
+`ma_data`, and the 17 whose illegal instruction is in U-mode (`uzbc`, `uzbkx`, `uzfh`, `uzicond`)
+diverge at the same store of `wtf`; in `uzba`, `uzbb`, `uzbkb` and `uzbs` `vm.c` itself runs the
+instruction in M-mode with its own stack, and they agree. `tests/corpus.expected` records all 173.
 
 Harness changes this needs:
 - `corpus.py` derives the suite name with `name.split("-p-")` (`:86`), so it must also split on
@@ -1201,7 +1227,9 @@ signatures equal" (§6, Q1).
      absent; for a translated fetch it is a VA.
    - `S_TRAPPING` already accepts `from U to S`.
 5. **CSRs**: add `satp` (logged as `CSR satp (0x180)`) and `menvcfg` to the watch list. The
-   `sstatus` view logic is as today.
+   `sstatus` view logic is as today. *Stage 2 note:* nothing to add: riscv-sim already watches every
+   CSR that `is_CSR_defined` accepts, `satp` and `menvcfg` included, and `compare.py` compares every
+   CSR that either side logs.
 6. **Harness** (`sim.sml`):
    - `htifStore` (`:507-556`) must match `tohost` on the **PA** of the store;
    - symbols and the signature dump are physical;
@@ -1319,10 +1347,15 @@ That is **31 decisions**. They revise [D5] (by S1 and S2), [D21] (S19), [D23] (S
    failures (for example `sv*_svpbmt_*`, `sv*_svnapot_*`, Svadu)?
 5. **Sv48 coverage from riscv-tests**: rebuild the `-v` suite with `-DSv48` (and Sv57 if
    supported) from the riscv-tests source, to get the same 110 tests under 4- and 5-level tables?
-   This needs a riscv-tests clone; the env source is in scratch `sail-oracle/dl-env/`.
+   This needs a riscv-tests clone; the env source is in scratch `sail-oracle/dl-env/`. *Stage 2:*
+   not done. A shallow clone of riscv-tests (3df703c, env 6de71ed) was made, but running its build
+   was refused by the permission system of the session that implemented stage 2. Sv48 and Sv57
+   are covered by `sim/tests/sv48.S` and `sv57.S` instead.
 6. **SFENCE.VMA and sail's TLB** (S4): accept and document divergences for software that omits a
    required fence, or keep using the `notlb` sail build for such tests? None is known in the
-   current corpus.
+   current corpus. *Stage 2:* against the `notlb` build the 173 `-v` tests give the same outcomes
+   and the same first divergent steps as against stock sail, and `sv39.S`, `sv48.S` and `sv57.S`,
+   which run SFENCE.VMA after every change of `satp`, a PTE or the PMP, agree with both.
 7. **WFI cfg** (S20): confirm on a sail run that `wfi_is_nop = false` with `max_time_to_wait = 0`
    gives exactly one `mtime` tick per WFI, and that `compare.py` merges the wait block. Then re-run
    `make compare-corpus` for `rv64si-p-wfi`, `rv64mi-*` and the S3K traces.
@@ -1342,7 +1375,8 @@ That is **31 decisions**. They revise [D5] (by S1 and S2), [D21] (S19), [D23] (S
 14. **CakeML timing**: the `mstatus` record gains `SUM` (S19). Coordinate with the WP6 window that
     rewrites `riscv_ok`.
 15. **L3 syntax checks** (§3.11): does L3 accept the catch-all `case f => f` on `TransResult`, and
-    reading the `MEM` component inside a pure function? Fallbacks are given in §3.11.
+    reading the `MEM` component inside a pure function? Fallbacks are given in §3.11. *Answered in
+    stage 2:* yes to both (§3.11, stage 2 notes).
 16. **riscv-test-env version**: the tag behind the prebuilt `sail-riscv-tests 2026-08-20` ELFs is
     unknown. Master of 2026-01-09 matches the observed behaviour.
 

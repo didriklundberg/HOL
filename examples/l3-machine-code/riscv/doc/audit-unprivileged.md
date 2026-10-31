@@ -1016,6 +1016,9 @@ None. Every RV64GC encoding in riscv-opcodes (`rv_i`, `rv64_i`, `rv_m`, `rv64_m`
   plan replaces with WARL-Bare satp until WP7. It becomes observable again as soon as
   `translateAddr` checks Read vs Write. That happens with the WP2 PMP hook: a U-mode SC into a
   PMP region with R=1, W=0 would succeed.
+  *WP7 note:* with Sv39, Sv48 and Sv57 (WP7 stage 2) an SC is translated as a write whether or not
+  its reservation matches (`design-smode.md` [S18]); `sim/tests/sv39.S` checks that an SC to a
+  read-only page raises a store page fault with and without a reservation.
 - **Expected:**
   - Manual §5.2: "No SC.W instruction shall retire unless it passes memory permission checks, but
     it is UNSPECIFIED whether any side effects (such as setting a page-table entry D bit) occur
@@ -1410,7 +1413,8 @@ report them again here; pass them on to the work package named.
 - **R2.** *A misaligned access that crosses a page is translated only at its first byte.* Out of
   scope: it is reachable only through priv-1.7 paging, which WP2 removes (WARL-Bare satp), WP7
   rewrites, and WP2.5 makes trap anyway. → WP7: translate both pages, as Sail's
-  `split_on_page_boundary` does.
+  `split_on_page_boundary` does. *WP7 note:* not needed: a misaligned access traps before it is
+  translated (`design-smode.md` [S15], [D55]), so no data access crosses a page.
 - **R3.** *FP instructions do not trap when mstatus.FS=Off.* Privileged rule (mstatus FS
   semantics). Reset sets FS=Initial and U-mode cannot write mstatus or sstatus, so no user
   program can reach FS=Off. → WP2.1/2.2 requirement: FS=Off makes F/D/C.F\* instructions

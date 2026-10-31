@@ -1,6 +1,6 @@
 # Privileged architecture design for the L3 RISC-V model (priv 1.13, M/U + PMP)
 
-**Scope.** This document specifies how the privileged parts of HOL4's L3 RISC-V model (`examples/l3-machine-code/riscv/src/riscv.spec`, branch `riscv-l3`) are rewritten from privileged spec 1.7 to **Machine-Level ISA 1.13 and Supervisor-Level ISA 1.13 of the privileged specification version 20260120**. The target is one RV64-only hart (MXLEN = SXLEN = UXLEN = 64), with extensions **I M A F D C Zicsr Zifencei Zicntr** (RV64GC), **M-mode and U-mode executed and validated**, and **physical memory protection (PMP)** with 16 entries. **S-mode is present only as storage**: `misa.S = 1`, every S-mode CSR exists with 1.13 numbering and legalisation, `medeleg`/`mideleg`/`sret` are implemented as specified, but S-mode execution is outside the validated scope. Nothing here may need rework when S-mode and Sv39/Sv48 are added later (plan WP7). *WP7 amendment:* `design-smode.md` validates S-mode execution (its stage 1) and adds Sv39/Sv48/Sv57 translation; it revises the decisions it names ([D5], [D21], [D23], [D32], [D46]), and this document stays in force for everything else. Not implemented: H, V, Sv* translation (`satp` accepts only Bare), debug mode and triggers, NMI/Smrnmi, Sstc, Sscofpmf, Smstateen, Smepmp, Smdbltrp/Ssdbltrp, Zicfilp/Zicfiss, Zihpm, Zkr. Fields of those extensions appear only as read-only zero. The document fixes behaviour; it does not design L3 code, but names the existing L3 functions each rule replaces.
+**Scope.** This document specifies how the privileged parts of HOL4's L3 RISC-V model (`examples/l3-machine-code/riscv/src/riscv.spec`, branch `riscv-l3`) are rewritten from privileged spec 1.7 to **Machine-Level ISA 1.13 and Supervisor-Level ISA 1.13 of the privileged specification version 20260120**. The target is one RV64-only hart (MXLEN = SXLEN = UXLEN = 64), with extensions **I M A F D C Zicsr Zifencei Zicntr** (RV64GC), **M-mode and U-mode executed and validated**, and **physical memory protection (PMP)** with 16 entries. **S-mode is present only as storage**: `misa.S = 1`, every S-mode CSR exists with 1.13 numbering and legalisation, `medeleg`/`mideleg`/`sret` are implemented as specified, but S-mode execution is outside the validated scope. Nothing here may need rework when S-mode and Sv39/Sv48 are added later (plan WP7). *WP7 amendment:* `design-smode.md` validates S-mode execution (its stage 1) and adds Sv39/Sv48/Sv57 translation; it revises the decisions it names ([D5], [D21], [D23], [D32], [D46]), and this document stays in force for everything else. Not implemented: H, V, Sv* translation (`satp` accepts only Bare; *WP7 amendment:* its stage 2 adds Sv39, Sv48 and Sv57, `design-smode.md` §3), debug mode and triggers, NMI/Smrnmi, Sstc, Sscofpmf, Smstateen, Smepmp, Smdbltrp/Ssdbltrp, Zicfilp/Zicfiss, Zihpm, Zkr. Fields of those extensions appear only as read-only zero. The document fixes behaviour; it does not design L3 code, but names the existing L3 functions each rule replaces.
 
 ## 0. Conventions
 
@@ -24,7 +24,7 @@
 | R5 | `mtime`/`mtimecmp` | Compatibility analysis and plan: declared state (`clock` renamed `mtime`, new `c_mtimecmp`). Counters analysis: memory-backed CLINT words. | **Memory-backed** CLINT words in `MEM8`; no new declared timer state; `clock` is deleted ([D67]). | P §3.2.1 p.59: `mtime` and `mtimecmp` are *memory-mapped* registers; declared state is only correct with an MMIO dispatch in every load/store, which costs a case split in every HOL step theorem. |
 | R6 | Platform interrupt inputs | Traps analysis: `MSIP`, `MEIP`, `SEIP_ext` are harness-set state. Counters analysis: `MSIP` from CLINT memory, `MEIP` constant 0. | `MSIP` from the CLINT `msip` word (memory-backed, like R5); `MEIP` and external `SEIP` are declared hidden per-hart booleans that the spec never writes, reset to false, settable only by the harness ([D42]). | P §3.1.9 p.44: MSIP is written through memory-mapped `msip`; MEIP/SEIP come from a platform interrupt controller, which is not modelled. |
 | R7 | `mcycle`/`minstret` storage | CSR analysis: new `MachineCSR` fields. Compatibility analysis: keep top-level `c_cycles`/`c_instret`. | **Top-level** `c_cycles`/`c_instret` ([D68]). | Spec silent; they are already hidden in `prog` (F3). |
-| R8 | `sstatus` write mask | CSR analysis: `0xC6122` (includes SUM). Status analysis: `0x86122`. | **`0x86122`**. Both give the same stored value because `legalize_mstatus` clears SUM. | SUM is RO0 when `satp.MODE` is read-only 0: P §3.1.6.4 p.35, §12.1.1.2 p.114. |
+| R8 | `sstatus` write mask | CSR analysis: `0xC6122` (includes SUM). Status analysis: `0x86122`. | **`0x86122`**. Both give the same stored value because `legalize_mstatus` clears SUM. *WP7 amendment ([S19]):* SUM is writable from WP7 stage 2, so the effective mask is `0xC6122`. | SUM is RO0 when `satp.MODE` is read-only 0: P §3.1.6.4 p.35, §12.1.1.2 p.114. |
 | R9 | `mstatus.SD` storage | Current L3, sail and the CSR analysis store SD. Status analysis: derive it on read. | **Derived on read**; stored SD/UXL/SXL/RO0 bits are don't-care ([D20]). | P §3.1.6.7 p.40 defines SD as a read-only function of FS/XS/VS; either is conformant; arbitrary HOL states decide. |
 | R10 | Number of present CSR addresses | CSR analysis stated 116 (6 + 12 + 98). | Recount of its own table gives **114** (6 U + 11 S + 97 M). | Arithmetic (§3.6.1). |
 | R11 | Plan WP2.4 "SRET illegal in M-mode if TSR" | Plan vs status/traps analyses. | **SRET in M-mode is legal whatever TSR is.** | P §3.1.6.6 p.37: TSR traps SRET "while executing in S-mode". |
@@ -43,7 +43,7 @@ Baseline: `riscv.spec` on `riscv-l3` at `55e74e68b`. Consumers as checked out on
 
 - **F1. No consumer runs the spec's `Next`.** HOL step, CakeML and HolBA use `riscv_step$NextRISCV` (`step/riscv_stepScript.sml:48-61`), built on a hand-written `riscv_step$Fetch` (`:28-36`: misaligned PC gives `UNDEFINED`, then `translateAddr (pc, Instruction, Read)`, then `rawReadInst`). A PMP check added to the spec's `Fetch` is invisible to consumers unless it is also added to `riscv_step$Fetch_def`; if it is not, `NextRISCV` fetches from PMP-denied memory and no longer refines `Next`. This is a **soundness obligation on WP3**. Likewise `NextRISCV` does not take interrupts, so its theorems need a "no takeable interrupt" hypothesis (§1.5 H6). The spec's `Next`, interrupt check, `takeTrap`, HTIF and `initMachine` are used only by the SML emulator and can be rewritten freely.
 - **F2. `#UNDEFINED` makes a function state-passing in the HOL export** (`architecture_def` returns `(Architecture, state)`). Every function the step libraries evaluate (`privilege`, `curPrivilege`, `in32BitMode`, `haveRVC`, `translateAddr`, `checkCSROp`, legalisers) must be total.
-- **F3. `prog` turns every top-level `declare` into a separation-logic component unless hidden** (`prog/riscv_progScript.sml:10-15`; mechanism `common/stateLib.sml:295-325`). Hidden today: `c_update log totalCore done clock c_tlb c_instret c_cycles c_UCSR c_SCSR c_ReserveLoad c_HCSR c_ExitCode`. A stale hidden name is ignored. Anything M-mode step theorems read must stay visible; therefore `translateAddr` and the M-mode PMP path must not read `c_SCSR` (e.g. `satp`).
+- **F3. `prog` turns every top-level `declare` into a separation-logic component unless hidden** (`prog/riscv_progScript.sml:10-15`; mechanism `common/stateLib.sml:295-325`). Hidden today: `c_update log totalCore done clock c_tlb c_instret c_cycles c_UCSR c_SCSR c_ReserveLoad c_HCSR c_ExitCode`. A stale hidden name is ignored. Anything M-mode step theorems read must stay visible; therefore `translateAddr` and the M-mode PMP path must not read `c_SCSR` (e.g. `satp`). *WP7 amendment ([S1]):* `translateAddr` reads `satp` only when the privilege it is given is not M, which it tests first, so the M-mode path still reads no `c_SCSR`.
 - **F4. HolBA's `bmr_extra` (= `riscv_state_is_OK`) must hold before and after every lifted instruction** (`src/theory/tools/lifter/bir_inst_liftingScript.sml:158-221`). Only true invariants go there; state that instructions change (current privilege, `pmpcfg*`, `pmpaddr*`, `mstatus`) must be lifted BIR variables.
 - **F5. The lifter can only turn word-valued hypotheses into BIR asserts** (`BMLI` returns `Imm8`/`Imm64`). `curPrivilege () s = Machine` cannot be lifted; `s.c_privilege s.procID = 3w` can.
 - **F6. L3 allows the same field name in different register types** (`mie.SSIE` and `sie.SSIE` both exist), so unprefixed spec field names work in both `mstatus` and `sstatus`.
@@ -194,7 +194,7 @@ Vendored step fork `src/shared/l3-machine-code/riscv/step/`: Script 552-555, 565
 
 #### 1.4.4 Names and signatures that must not change
 
-`translateAddr :: (vAddr, fetchType, accessType) -> pAddr option`; `haveRVC()`, `in32BitMode()`, `curPrivilege() :: Privilege`; `privLevel`, total `privilege`; `checkCSROp :: (creg, reg, accessType) -> bool`; `check_CSR_access :: (csrRW, csrPR, Privilege, accessType) -> bool`; `is_CSR_defined :: creg -> bool`; `csrRW`, `csrPR`; `component CSRMap(creg)`, `component CSR(creg)`; `writeCSR :: (creg, regType)`; `setTrap`, `signalException(ExceptionType)`, `signalAddressException(ExceptionType, vAddr)`; `branchTo`; `rawReadInst`, `rawReadData`, `rawWriteData`; `component Skip/PC/NextFetch/MCSR`; constructors `BranchTo`, `Trap`, `NoException` and every `instruction` constructor including `System(CSRRW…)`.
+`translateAddr :: (vAddr, fetchType, accessType) -> pAddr option` (*WP7 amendment ([S1], [S2]):* `translateAddr :: (vAddr, fetchType, accessType, Privilege) -> TransResult`, and `fetchAddr`/`dataAddr` return `TransResult`, `design-smode.md` §3.11); `haveRVC()`, `in32BitMode()`, `curPrivilege() :: Privilege`; `privLevel`, total `privilege`; `checkCSROp :: (creg, reg, accessType) -> bool`; `check_CSR_access :: (csrRW, csrPR, Privilege, accessType) -> bool`; `is_CSR_defined :: creg -> bool`; `csrRW`, `csrPR`; `component CSRMap(creg)`, `component CSR(creg)`; `writeCSR :: (creg, regType)`; `setTrap`, `signalException(ExceptionType)`, `signalAddressException(ExceptionType, vAddr)`; `branchTo`; `rawReadInst`, `rawReadData`, `rawWriteData`; `component Skip/PC/NextFetch/MCSR`; constructors `BranchTo`, `Trap`, `NoException` and every `instruction` constructor including `System(CSRRW…)`.
 
 ### 1.5 Step-theorem hypothesis contract (replaces `mstatus.VM = 0w`)
 
@@ -238,7 +238,7 @@ Fixes that are not choices:
 2. **Non-existent CSRs are reserved** (P §2.1 p.13); the model raises illegal instruction ([D24]); `CSRMap`'s `#UNDEFINED` default stays unreachable behind `is_CSR_defined`.
 3. **`misa` write suppression** when clearing C at a PC that is not 4-aligned (P §3.1.1 p.29; §2.2.3).
 4. **`mepc[1]` is masked on read when IALIGN = 32 but stays writable** (P §3.1.14 p.48; §4.1.5).
-5. **`satp` writes with an unsupported MODE have no effect** (P §12.1.11 p.125), so `translateAddr` is exactly the identity.
+5. **`satp` writes with an unsupported MODE have no effect** (P §12.1.11 p.125), so `translateAddr` is exactly the identity. (*WP7 amendment:* Sv39, Sv48 and Sv57 become supported in its stage 2, and `translateAddr` translates below M, `design-smode.md` §3.)
 6. **`takeTrap` must not clear `MPRV` or the load reservation** (§4.6).
 7. **Misaligned LR raises 4, not 6** (§5.6.1).
 8. **`csrName(0x144)` returns "sip"**, not "mip".
@@ -336,7 +336,7 @@ Constants: `MISA_RESET = 0x8000_0000_0014_112D` (A C D F I M S U; the "maximal s
 | 14:13 | FS | WARL, all four values legal ([D16]) | `00` (Off) ([D70]) | RW |
 | 16:15 | XS | RO0 (no other user extension state, p.38) | 0 | visible, RO0 |
 | 17 | MPRV | RW (U implemented) | **0 (M)** | no |
-| 18 | SUM | **RO0**: "read-only 0 if S-mode is not supported or if satp.MODE is read-only 0" (p.35; P §12.1.1.2 p.114); `satp.MODE` is read-only 0 because writes with an unsupported MODE have no effect (P §12.1.11 p.125). sail: `SUM = if virtual_memory_supported() then v[SUM] else 0` | 0 | visible, RO0 |
+| 18 | SUM | **RO0**: "read-only 0 if S-mode is not supported or if satp.MODE is read-only 0" (p.35; P §12.1.1.2 p.114); `satp.MODE` is read-only 0 because writes with an unsupported MODE have no effect (P §12.1.11 p.125). sail: `SUM = if virtual_memory_supported() then v[SUM] else 0`. *WP7 amendment ([S19]):* RW from WP7 stage 2, where `satp` accepts Sv39, Sv48 and Sv57 | 0 | visible, RO0 (RW from WP7) |
 | 19 | MXR | RW (S implemented); no effect (no paging; never affects PMP, p.35) | 0 | RW |
 | 20 | TVM | RW (S implemented); effect only in S (§2.3.7) | 0 | no |
 | 21 | TW | RW; effect only in S/U (§2.3.7) | 0 | no |
@@ -395,6 +395,7 @@ This replaces `checkInterrupts`' `curIE = MCSR.mstatus.MIE` (L3 1531-1533). The 
 - **Reachable-state invariant**: `cur ≠ M ⇒ MPRV = 0` (reset clears it; only an M-mode `mstatus` write sets it; `sstatus` does not expose it; every xRET to a mode below M clears it; trap entry never lowers privilege). So [D22] equals the "only in M-mode" form (plan WP2.5) on reachable states; step theorems use H2 (§1.5).
 - **MXR**: storage only (no paging; p.35: MXR and SUM "have no impact on whether access-fault exceptions are raised due to PMAs or PMP").
 - **SUM**: RO0 (§2.3.1). WP7 (Sv39) makes it writable by adding bit 18 to `MSTATUS_WMASK` and the `sstatus` write mask; nothing else changes.
+- *WP7 amendment ([S19], `design-smode.md` §2.1, §3.5).* Done in WP7 stage 2: `MSTATUS_WMASK = 0x7E79AA`. MXR and SUM now take part in translation (the leaf checks of `ptePermits`), and SUM also applies with MPRV = 1 and MPP = S (p.35); neither affects the PMP.
 
 #### 2.3.7 TVM, TW, TSR (P §3.1.6.6 p.37)
 
@@ -444,7 +445,7 @@ SSTATUS_WMASK = 0x0000_0000_0008_6122   -- writable here: SIE SPIE SPP FS MXR  (
 - **Write** of `v` (sail `legalize_mstatus(m, lift_sstatus(m, s))`):
   1. `m' := (stored && ~SSTATUS_RMASK) || (v && SSTATUS_RMASK)`;
   2. `mstatus := legalize_mstatus(m', misa)`.
-  Closed form: `mstatus := (stored && ~0x86122) || (v && 0x86122)`. (The CSR analysis gave mask `0xC6122` including SUM; SUM is RO0 here, so `0x86122` is correct and the stored result is identical, R8.)
+  Closed form: `mstatus := (stored && ~0x86122) || (v && 0x86122)`. (The CSR analysis gave mask `0xC6122` including SUM; SUM is RO0 here, so `0x86122` is correct and the stored result is identical, R8.) *WP7 amendment ([S19]):* with SUM writable the closed form is `(stored && ~0xC6122) || (v && 0xC6122)`; the L3 code, which masks with `SSTATUS_RMASK` and then legalises, is unchanged.
 - **Access**: `csr<9:8> = 01`: accessible from S and M; illegal from U.
 
 **Replaces** `register sstatus` (L3 460-468), `lift_mstatus_sstatus`/`lower_sstatus_mstatus` (L3 574-603), and the 0x100 arms of `CSRMap` (L3 944, 1053).
@@ -502,7 +503,7 @@ Bugs this fixes in L3 4130-4200: (i) `CSRRWI` with `uimm = 0` neither writes nor
 
 ### 3.4 Modulation, implicit reads, width (P §2.4–2.7 p.25–26)
 
-- **Field modulation** (P §2.4 p.25): no stored field changes its legal set as a result of another CSR write here (`misa` writable only in C; C changes only the read view of `xepc`, specified explicitly by P §3.1.14 p.48; `sstatus`/`sie`/`sip` are views; STCE, PBMTE, ADUE, SSE are RO0). Nothing to implement. WP7 must revisit if `misa.S/U` or `satp` modes become writable.
+- **Field modulation** (P §2.4 p.25): no stored field changes its legal set as a result of another CSR write here (`misa` writable only in C; C changes only the read view of `xepc`, specified explicitly by P §3.1.14 p.48; `sstatus`/`sie`/`sip` are views; STCE, PBMTE, ADUE, SSE are RO0). Nothing to implement. WP7 must revisit if `misa.S/U` or `satp` modes become writable. *WP7 amendment:* `satp` accepts Sv39, Sv48 and Sv57 from WP7 stage 2, which makes SUM writable for good, since it depends on which modes the hart supports, not on the value of `satp`; so there is still no field modulation.
 - **Implicit reads** (P §2.5 p.26) return what an explicit read would: trap entry reads the legalised `xtvec`; MRET/SRET read `xepc` through `read_xepc`; PMP matching reads `pmpaddr` through the G-aware view (= stored value at G = 0).
 - **Width modulation** (P §2.6 p.26): moot (UXL, SXL, MXL read-only 2). Delete the `in32BitMode()` branches in CSR code.
 - **CSRs wider than XLEN** (P §2.7 p.26): none on RV64. All RV32 high halves are reserved on RV64 and illegal: 0xC80–0xC9F, 0x310, 0x312, 0x31A, 0x757, 0xB80–0xB9F, 0x721–0x73F, 0x15D, and odd `pmpcfg1..15` (P §3.7.1 p.70). 32-bit CSRs (`fcsr`, `mcounteren`, `scounteren`, `mcountinhibit`, `mvendorid`) read zero-extended; writes ignore bits 63:32.
@@ -629,6 +630,8 @@ Every other address is also illegal. Implement `is_CSR_defined` as an explicit w
 1. If `v[63:60] ≠ 0`: return `old` ("the entire write has no effect", p.126).
 2. Else return `v`, with ASID limited to ASIDLEN = 16 and PPN to PABITS − 12 = 44 bits, i.e. `v` unchanged ([D32]).
 Translation is never performed; `translateAddr` is the identity ([D5]).
+
+*WP7 amendment ([S10], [S7], `design-smode.md` §3.2.3).* From WP7 stage 2 step 1 returns `old` only if `v[63:60] ∉ {0, 8, 9, 10}` (Bare, Sv39, Sv48, Sv57), tested as a mask comparison on `v && 0xF000…0`, and `translateAddr` translates whenever the privilege is S or U and MODE is not Bare (`design-smode.md` §3.5). The "entire write has no effect" quote is on p.125.
 
 ### 3.8 1.7-era CSRs removed from `is_CSR_defined`, `CSRMap`, `csrName` (L3 895–1240) and the records (L3 344–520)
 
@@ -782,7 +785,7 @@ This reproduces sail `legalize_cause` (`core/sys_regs.sail:~700`), which accepts
 | 9 | `SMode_Env_Call` | ECALL in S | 0 | yes |
 | 10 | — (delete `HMode_Env_Call`) | reserved | — | RO0 |
 | 11 | `MMode_Env_Call` | ECALL in M | 0 | **RO0** (p.43) |
-| 12, 13, 15 | `Fetch_PageFault`, `Load_PageFault`, `Store_AMO_PageFault` *(new)* | **never raised** (Bare); present for WP7 | faulting address | yes |
+| 12, 13, 15 | `Fetch_PageFault`, `Load_PageFault`, `Store_AMO_PageFault` *(new)* | **never raised** (Bare); present for WP7. *WP7 amendment:* raised by translation from its stage 2 (`design-smode.md` §3.7) | faulting address | yes |
 | 14, 17, 20–23, 32–47, ≥ 64 | — | reserved | — | RO0 |
 | 16 | — | double trap (Smdbltrp absent) | — | **RO0** (p.43) |
 | 18, 19 | — | software check, hardware error (never raised) | — | RO0 |
@@ -932,7 +935,7 @@ Illegal `tval = 0x10500073`. sail cfg: `platform.wfi_is_nop = false`, `platform.
 
 `rs1`/`rs2` are read and ignored; an invalid VA raises nothing (p.128); no translation caches. Replaces `SFENCE_VM` (L3 4209) and the TLB code. p.130 also permits illegal-everywhere when `satp.MODE` is read-only zero; sail's default `extensions.Svbare.sfence_vma_illegal_if_svbare_only = true` does that, so cfg sets it to `false`.
 
-*WP7 amendment ([S4], `design-smode.md` §2.13).* WP7 keeps this legality; the S-mode rows are validated by `sim/tests/smode.S`.
+*WP7 amendment ([S4], `design-smode.md` §2.13).* WP7 keeps this legality; the S-mode rows are validated by `sim/tests/smode.S`. With Sv39, Sv48 and Sv57 (WP7 stage 2) the fence still has nothing to do, now because the hart has no address-translation cache: every access walks the page table as it then is in memory, and so uses a translation that the fence allows (P §12.2.1 p.128). The p.130 option of making SFENCE.VMA illegal no longer applies, since `satp.MODE` is not read-only zero, and the cfg knob is moot.
 
 ### 4.8 Absent features
 
@@ -1042,7 +1045,7 @@ Classifying access `[a, a+n)`, `n ∈ {1, 2, 4, 8}`, `last = a + (n − 1)` (nev
 
 ### 5.4 `pmpCheck(a, n, kind, p) -> bool` ([D53], R3)
 
-Inputs: physical address `a` (= effective address, `satp` Bare); width `n` (1, 2, 4, 8 for data; 2 for a fetch parcel); `kind ∈ {Read, Write, ReadWrite, Execute}`; privilege `p ∈ {M, S, U}` (fetch: `curPrivilege()`; data: `effectivePrivilege()`, §2.3.6).
+Inputs: physical address `a` (= effective address, `satp` Bare; *WP7 amendment:* the translated address, `design-smode.md` §3.5, and for the read of a PTE its physical address with `p` = S and `kind` = Read, [S14]); width `n` (1, 2, 4, 8 for data; 2 for a fetch parcel); `kind ∈ {Read, Write, ReadWrite, Execute}`; privilege `p ∈ {M, S, U}` (fetch: `curPrivilege()`; data: `effectivePrivilege()`, §2.3.6).
 
 1. If `PMP_COUNT = 0`: return T (the no-match failure applies only "if at least one PMP entry is implemented", P §3.7.1.3 p.73).
 2. For i = 0 .. PMP_COUNT − 1 in increasing order (fixed bound, no recursion; an L3 `for` loop or unrolled):
@@ -1089,7 +1092,7 @@ See §4.3: misaligned (4/6) above access fault (5/7), without a PMP check. In sa
 **Data access** (every explicit access):
 1. Compute effective address `a` and width `n`.
 2. If `a mod n ≠ 0`: raise 4 (load, FP load, LR) or 6 (store, FP store, SC, AMO), `tval = a`; stop.
-3. `p := effectivePrivilege()`; `pa := a` (`translateAddr` identity; WP7 inserts translation here).
+3. `p := effectivePrivilege()`; `pa := a` (`translateAddr` identity; WP7 inserts translation here). *WP7 amendment (`design-smode.md` §3.8):* `pa` is the translation of `a` with privilege `p`, which may raise a page fault (13 or 15), or an access fault (5 or 7) if the PMP denies the read of a PTE; `tval = a` in every case.
 4. SC only: do step 5 whether or not the reservation matches ([D60]). If step 5 passes and the reservation does not match, the SC fails: `rd := 1`, no memory write.
 5. If `¬pmpCheck(pa, n, kind, p)`: raise 5 (Read) or 7 (Write, ReadWrite), `tval = a`; stop.
 6. Perform the access.
@@ -1340,7 +1343,7 @@ Settings this design requires, from all chapters. "Change" marks a difference fr
 | `extensions.F.fflags_dirty_policy` | `Fflags_Dirty_Flag` | [D17] | **change** (default `Precise`) |
 | `extensions.Zicfilp`, `Zicfiss`, `Smdbltrp`, `Ssdbltrp`, `Sstc`, `Sscofpmf`, `Smcntrpmf`, `Sdtrig`, `Zkr`, `Zihpm` `.supported` | false | absent extensions; Zkr off removes `mseccfg` ([D30]) | present / change |
 | `extensions.Zicntr.supported` | true | | |
-| `extensions.Sv39/Sv48/Sv57.supported` | false; `Svbare` true | Bare only (SUM RO0) | present |
+| `extensions.Sv39/Sv48/Sv57.supported` | false; `Svbare` true. *WP7 stage 2:* all three true, with `Ssccptr` and `Svade` true, `Svadu`, `Svvptc`, `Svnapot`, `Svpbmt`, `Svrsw60t59b`, `Svinval`, `Svukte` false, and `memory.physaddr_bits` 56, `memory.asidlen` 16 (`design-smode.md` §4.2) | Bare only (SUM RO0); WP7: [S3], [S7]-[S9], [S12], [S13] | present; WP7: Sv39/Sv48/Sv57 true are sail's defaults, the extensions set false are **changes** |
 | `extensions.Svbare.sfence_vma_illegal_if_svbare_only` | false | [D46] | present (change from default) |
 | `platform.wfi_is_nop` | false | [D23], [S20] | default (WP7; `true` before) |
 | `platform.max_time_to_wait` | 0 | [S20] | **change** (WP7; default 10) |
@@ -1378,7 +1381,7 @@ Each row merges the decision items of the source analyses that cover the same ch
 | D2 | `privilege(0b10)` (§2.1) | (a) `#UNDEFINED`; (b) total, `10`→U; (c) fourth constructor | (b) | `#UNDEFINED` makes it state-passing (F2) and adds an `MPP ≠ 2` hypothesis to every MRET theorem; U agrees with `legalize_mstatus`; (c) keeps a non-spec mode | internal_error; unreachable since MPP legalised to U |
 | D3 | Privilege accessor (§1.4.1) | (a) unit function `curPrivilege()` + `setPrivilege(p)`; (b) `component curPrivilege` | (a) | HolBA evaluates ``privLevel (curPrivilege () s)`` (`riscv_stepScript.sml:815`) | direct register |
 | D4 | `misa.MXL`, `in32BitMode()` (§2.2) | (a) MXL stored read-only 2, `in32BitMode() = (misa.MXL == 1)`; (b) constant false; (c) keep `curArch()`/`architecture()` | (a) | consumer conjuncts survive as renames; pure (no `not1`, `architecture_def`); MXL encoding P Table 11 p.27 | xlen fixed at build; MXL read-only |
-| D5 | `translateAddr` body in WP2 (§3.7) | (a) identity, reads no state; (b) read `satp.MODE` as WP7 will | (a), keeping name and signature as the WP7 hook | `satp` is in hidden `c_SCSR` (F3); unsupported-MODE writes have no effect (P §12.1.11 p.125), so identity is exact | translation with Bare = identity |
+| D5 | `translateAddr` body in WP2 (§3.7) | (a) identity, reads no state; (b) read `satp.MODE` as WP7 will | (a), keeping name and signature as the WP7 hook. **Revised by WP7 [S1], [S2]**: `translateAddr(va, ft, ac, p) -> TransResult` translates with Sv39/Sv48/Sv57 below M and is the identity at M, tested first, and with Bare | `satp` is in hidden `c_SCSR` (F3); unsupported-MODE writes have no effect (P §12.1.11 p.125), so identity is exact | translation with Bare = identity |
 | D6 | `mstatus`/`sstatus` field naming (§1.4.2) | (a) spec's unprefixed names; (b) l3riscv `M_`/`S_` prefixes | (a) | L3 allows duplicate field names across types (F6); reusing `MPRV` for bit 17 turns stale `MPRV = 3w` uses into type errors | unprefixed |
 | D7 † | `ExceptionType`/`Interrupt` names (§4.2) | (a) keep HOL names, add `Load_Misaligned`, `Fetch_PageFault`, `Load_PageFault`, `Store_AMO_PageFault`, drop `HMode_Env_Call`, rename `AMO_Misaligned`→`Store_AMO_Misaligned`; (b) sail `E_*` names | (a) | no consumer names a constructor; small diff; code 6 is "Store/AMO address misaligned" (P Table 16 p.50) | `E_*` |
 | D8 | `TransferControl` trap-return arms (§4.7.5) | (a) `Mret`, `Sret`; (b) `Xret(Privilege)` | (a) | plan WP2.4; consumers match with a wildcard | n/a |
@@ -1394,7 +1397,7 @@ Each row merges the decision items of the source analyses that cover the same ch
 | D18 | `mstatus.VS` with S, no V (§2.3.1) | (a) RO0; (b) writable four-state storage | (a), cfg `vs_legal_states = ExtContext_Off` | permitted (p.38); no state; SD depends only on FS | `ExtContext_FourState` (writable) |
 | D19 | UXL/SXL (§2.3.8) | (a) read-only 2; (b) WARL allowing RV32 | (a) | permitted (p.34); keeps all XLEN-truncation rules dead | read-only 2 |
 | D20 † | `mstatus` storage of SD and constants (§2.3.4) | (a) store writable fields only, build constants and SD on read; (b) store the full image, keep SD consistent by invariant | (a) | arbitrary HOL states could otherwise read illegal `mstatus` values; Dirty update becomes the single assignment `FS := 3`; SD is read-only derived (p.40) | (b) |
-| D21 | S-related `mstatus` fields; SUM (§2.3.1) | (a) SIE, SPIE, SPP, MXR, TVM, TSR writable storage, SUM RO0; (b) all RO0 | (a) | with `misa.S = 1` RO0 is forbidden for these (p.32, p.35, p.37); SUM RO0 because `satp.MODE` is read-only 0 (p.35, p.114, p.125); WP7 adds one mask bit | (a) |
+| D21 | S-related `mstatus` fields; SUM (§2.3.1) | (a) SIE, SPIE, SPP, MXR, TVM, TSR writable storage, SUM RO0; (b) all RO0 | (a). **Revised by WP7 [S19]**: SUM writable, `MSTATUS_WMASK = 0x7E79AA` | with `misa.S = 1` RO0 is forbidden for these (p.32, p.35, p.37); SUM RO0 because `satp.MODE` is read-only 0 (p.35, p.114, p.125); WP7 adds one mask bit | (a) |
 | D22 | Scope of the MPRV rule (§2.3.6) | (a) literal: every explicit data access, any mode; (b) only when `cur = M` | (a), with invariant `cur ≠ M ⇒ MPRV = 0` documented | spec wording (p.35) and sail `effectivePrivilege`; equal on reachable states; H2 discharges it in M-mode theorems | (a) |
 | D23 | WFI per mode (§4.7.6) | M: NOP or wait; U: always illegal (forced, p.37) or NOP; S: illegal iff TW = 1, or wait then trap | M NOP; U always illegal; S illegal iff TW = 1, else NOP; cfg `wfi_is_nop = true`. **Revised by WP7 [S20]**: S with TW = 1 is illegal iff `read_mip() && mie = 0`, else NOP; cfg `wfi_is_nop = false`, `max_time_to_wait = 0` (§4.7.6) | NOP is legal (p.62); deterministic; p.37 allows immediate trap with TW = 1 | `wfi_is_nop = false`, `wfi_available_to_user_mode = false`; with `wfi_is_nop = true` sail retires S-mode WFI even with TW = 1 (open question 12) |
 | D24 | Access to a non-existent CSR (§3.1) | (a) illegal instruction; (b) `#UNDEFINED` | (a), from a whitelist checked before any read | always valid for reserved encodings (P §2.1 p.13); plan §2.2(4) forbids `#UNDEFINED` on reachable states | illegal (`postlude/csr_end.sail:12`) |
@@ -1405,7 +1408,7 @@ Each row merges the decision items of the source analyses that cover the same ch
 | D29 † | `menvcfg`/`senvcfg` FIOM (§6.8) | (a) FIOM writable, rest RO0; (b) all RO0 (allowed while Bare-only, p.54, p.123) | (a) | FIOM must become writable with Sv39 (WP7), so (a) avoids rework; matches sail default; corrects plan Appendix A | `writable_fiom = true` |
 | D30 | `mseccfg` (§6.8) | (a) absent, illegal; (b) present, RO0 | (a) | reserved unless an extension adds a field (P §3.1.19 p.56); classic PMP rules | exists only with Zkr/Zicfilp/Smmpm; cfg `Zkr = false` |
 | D31 | ID CSR values (§6.8) | `mvendorid`/`marchid`/`mimpid`/`mconfigptr`: 0 or real values; `mhartid`: 0 or `procID` | all 0; `mhartid = procID` (0 for one hart) | 0 permitted (p.29–31, p.53); trace equality | all 0 |
-| D32 | `satp` with Bare only (§3.7) | (a) MODE ≠ 0 ignored, MODE = 0 stores `v`; (b) MODE = 0 stores 0; (c) RO0. Accessibility: M always, S iff TVM = 0, U never (mandated) | (a) | unsupported-MODE write has no effect (p.126); Bare with nonzero fields UNSPECIFIED; matches sail; keeps ASID/PPN storage for WP7 | (a); ASIDLEN 16, PABITS 56 |
+| D32 | `satp` with Bare only (§3.7) | (a) MODE ≠ 0 ignored, MODE = 0 stores `v`; (b) MODE = 0 stores 0; (c) RO0. Accessibility: M always, S iff TVM = 0, U never (mandated) | (a). **Revised by WP7 [S10]**: MODE ∉ {0, 8, 9, 10} ignored, otherwise `v` stored; accessibility unchanged | unsupported-MODE write has no effect (p.126); Bare with nonzero fields UNSPECIFIED; matches sail; keeps ASID/PPN storage for WP7 | (a); ASIDLEN 16, PABITS 56 |
 | D33 | `mcause`/`scause` WLRL (§4.1.6) | (a) keep old unless code supported (sail set incl. 12, 13, 15, 19); `scause` keeps any code ≤ 31; (b) store anything; (c) trap | (a) | deterministic (P §2.3.2 p.25); `scause` must hold 0–31 (p.120); trace equality | `legalize_cause` = (a) |
 | D34 | Optional S-level CSRs (§3.6) | `senvcfg`, `scountinhibit`, `stimecmp`: present or absent | `senvcfg` present (FIOM only); `scountinhibit` absent; `stimecmp` absent | `senvcfg` is defined with S; Smcdeleg and Sstc are outside the ISA string; Sstc can be added later without restructuring | `senvcfg` with S; Sstc on by default, off in cfg |
 | D35 | Debug/trigger CSRs (§3.6.2) | (a) absent; (b) `tselect` with no triggers | (a) | out of scope; 0x7B0–0x7BF "should" be illegal in M (p.13) | Sdtrig on by default, off in cfg |
@@ -1419,7 +1422,7 @@ Each row merges the decision items of the source analyses that cover the same ch
 | D43 | `mtval`/`stval` contents (§4.2) | illegal instruction: instruction bits or 0; EBREAK: `pc` or 0; misaligned/access fault: address or 0 | instruction bits (16 or 32, zero-extended); `pc`; faulting address (fetch: parcel) | matches sail defaults; useful to handlers; all permitted (p.52–53) | all `xtval_nonzero.*` true |
 | D44 | `mepc`/`sepc` storage and IALIGN masking (§4.1.5) | (a) store 63:1, mask bit 1 on read when `misa.C = 0`; (b) mask at write with current C (current L3); (c) truncate to PABITS | (a) | p.48 requires bit 1 to stay writable while masked; (b) violates it | (a) (`legalize_xepc`, `align_pc`) |
 | D45 | LR reservation on trap entry/xRET (§4.6) | (a) keep; (b) clear on trap (current L3); (c) clear on xRET too | (a) | not required (p.61; U p.118); trace equality | no cancel on trap or xRET |
-| D46 | SFENCE.VMA with Bare only (§4.7.7) | (a) decoded; NOP in M and S (TVM = 0); illegal in U and S (TVM = 1); (b) illegal everywhere (p.130) | (a), cfg `sfence_vma_illegal_if_svbare_only = false`. Kept by WP7 [S4], validated in S-mode (§4.7.7) | WP7 adds Sv39 without changing legality; plan WP2.4 | (b) |
+| D46 | SFENCE.VMA with Bare only (§4.7.7) | (a) decoded; NOP in M and S (TVM = 0); illegal in U and S (TVM = 1); (b) illegal everywhere (p.130) | (a), cfg `sfence_vma_illegal_if_svbare_only = false`. Kept by WP7 [S4], validated in S-mode; the reason becomes "no address-translation cache" (§4.7.7) | WP7 adds Sv39 without changing legality; plan WP2.4 | (b) |
 | D47 | Number of PMP entries (§5.1) | 0, 16, 64, or 64 with 16 usable; spec constant or runtime parameter | 16, all usable, as one spec constant `PMP_COUNT ∈ {0,16,64}`; HOL instantiates 16 | sail default; S3K uses 8; fixed bound keeps the loop unrollable; 64 quadruples state; only 0/16/64 allowed (p.70) | 16 / 16 |
 | D48 † | PMP grain G (§5.2.2) | (a) G = 0; (b) G = 1 (no partial matches for aligned ≤ 8-byte accesses); (c) larger | (a), with H4 in the M-mode contract | sail default, plan WP0.2, arch tests probe G and use NA4; no read-view masking; the HOL cost of (a) is one word conjunct (§1.5) | `grain = 0` |
 | D49 † | `pmpcfg` write with R = 0, W = 1 (§5.2.3) | (a) R = W = X = 0, keep L and A; (b) R = W = 0 keep X (plan text); (c) ignore the byte; (d) R = W = 1; (e) fatal | (a); amend plan WP2.5 | matches sail exactly; least privilege; keeps W ⇒ R; only a legal value is required (p.71, p.58) | `PMP_ClearPermissions` |
