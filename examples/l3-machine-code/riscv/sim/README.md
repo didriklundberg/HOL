@@ -473,6 +473,8 @@ sail with `SAIL_CONFIG`). The expected signatures are sail's.
 | `fp-rmm.S` (rv64imafdc) | RMM in the exact conversions FCVT.D.S/D.W/D.WU, which must agree, then `fadd.s` with RMM at label `rmm_fadd` (audit F13, deferred): the model raises illegal instruction, sail rounds | the first trap is illegal instruction at `rmm_fadd`; exit 4 (trap loop at `mtvec` = 0) | the first divergence is the step at `rmm_fadd` |
 | `batch-a.S` (rv64imac) | LR/SC reservation after a failed SC (F3), AMOMIN/MAX[U].W with junk in `rs2<63:32>` (F4), C.ADDIW (F15), DIV/REM/REMU with `rd` aliasing a source, x/0 and MIN/-1 (F20) | exit 0, `batch-a.sig.expected` | agree |
 | `smode.S` (rv64im_zicsr) | S-mode execution (WP7, `../doc/design-smode.md` §2): MRET and SRET into S-mode and U-mode, ECALL from S-mode taken in M-mode and, delegated, in S-mode, the `medeleg`/`mideleg` masks, `sie`/`sip` through `mideleg`, SSIP set by M-mode and taken in S-mode with `stvec` Direct and Vectored, an undelegated SSI in S-mode and a delegated one in U-mode, SRET under TSR, WFI under TW (also with SSIP pending and enabled while SIE is clear), counter enables from S-mode and U-mode, `scause` WLRL, `stval` of an illegal instruction in S-mode, `satp` and SFENCE.VMA under TVM | exit 0, `smode.sig.expected` (100 checks) | agree |
+| `sv39.S` (rv64ima_zicsr, `vm.h`) | Sv39 translation (WP7, `../doc/design-smode.md` §3): `satp` writes with reserved MODEs, `mstatus.SUM` (also through `sstatus`), 4 KiB, 2 MiB and 1 GiB leaves, a sign-extended and two non-canonical VAs, every page fault of the walk (invalid PTE, W without R, PTE bits 63-54, a pointer at level 0, a pointer with D, A or U, misaligned superpages, U and SUM for loads, stores and fetches, MXR, A and D), the PMP on a PTE read and on the final physical address (access faults 1, 5, 7 with the VA as `mtval`), a 32-bit instruction whose upper half is on an unmapped page (`mtval` = pc + 2) or on a page mapped elsewhere, LR/SC through two VAs of one physical address, MPRV with MPP = S and U, page faults delegated to S-mode and, under MPRV, not, Bare in S-mode and `satp` written by S-mode | exit 0, `sv39.sig.expected` (107 checks) | agree, with `--mem-reads` |
+| `sv48.S`, `sv57.S` (rv64ima_zicsr, `vm.h`) | Sv48 and Sv57: leaves at every level (512 GiB, and 256 TiB for Sv57), a VA canonical only for the wider mode, sign-extended and non-canonical VAs, misaligned superpages and invalid PTEs at the upper levels, U-mode code and MPRV | exit 0, `sv48.sig.expected` (24 checks), `sv57.sig.expected` (23 checks) | agree, with `--mem-reads` |
 
 The FP programs set `mstatus.FS` themselves (`ENABLE_FP` in `fpmacros.h`);
 `fsoff-all` relies on its reset value, Off. `fp-arith` and `fp-conv` need
@@ -483,8 +485,9 @@ To add a regression program `tests/foo.S`:
 1. Write it self-checking with `test.h` (`TEST_START`, `CHECK`, `RESULT`,
    `TEST_END`, `SIGNATURE(n)`), so that riscv-sim exits 0 on success.
 2. Add `foo` to `FP_REGRESS` in the Makefile if it needs F/D (it is then
-   built with `-march=rv64imafdc_zicsr`), else to `REGRESS` with a build
-   rule of its own like `build/batch-a.elf`.
+   built with `-march=rv64imafdc_zicsr`), to `VM_REGRESS` if it uses
+   `tests/vm.h` (built with `-march=rv64ima_zicsr`), else to `REGRESS`
+   with a build rule of its own like `build/batch-a.elf`.
 3. Add it to the loop in `make test`, and write `tests/foo.sig.expected`
    from sail: `sail_riscv_sim --config-override $(SAIL_CONFIG)
    --test-signature tests/foo.sig.expected build/foo.elf`.
@@ -600,7 +603,7 @@ on 354:
 | `lib/IntInfFix.sml` | the `IntInf.~>>` work-around |
 | `compare.py` | trace comparison with sail-riscv |
 | `corpus.py` | the riscv-tests corpus on riscv-sim and through `compare.py` |
-| `tests/` | smoke tests, regression programs, linker script, expected results (`*.sig.expected`, `int.trace.expected`, `corpus.expected`) |
+| `tests/` | smoke tests, regression programs (with `vm.h`, shared by the address-translation tests), linker script, expected results (`*.sig.expected`, `int.trace.expected`, `corpus.expected`) |
 
 The structure of `sim.sml` and `poly_run.sml` follows `src/sml/model.sml` and
 `src/sml/poly_run.sml` of [l3riscv](https://github.com/SRI-CSL/l3riscv)
