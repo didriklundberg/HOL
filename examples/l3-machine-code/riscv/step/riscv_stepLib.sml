@@ -395,17 +395,17 @@ local
   val neg_count = List.length o List.filter boolSyntax.is_neg o Thm.hyp
   fun err tm s = ( Parse.print_term tm; print "\n"; raise ERR "run" s )
 in
+  (* fnd fails (find_rw: "not found") only when no step theorem matches *)
   fun run tm =
-    (case List.mapPartial (eval tm) (fnd tm) of
-        [] => err tm "no valid step theorem"
-      | [x] => x
-      | l => List.last (mlibUseful.sort_map neg_count Int.compare l))
-    handle (e as HOL_ERR herr) =>
-      if message_of herr = "not found" andalso
-         top_function_of herr = "find_rw"
-      then
-         err tm "instruction instance not supported"
-      else raise e
+    let
+      val rwts = fnd tm
+                 handle HOL_ERR _ => err tm "instruction instance not supported"
+    in
+      case List.mapPartial (eval tm) rwts of
+         [] => err tm "no valid step theorem"
+       | [x] => x
+       | l => List.last (mlibUseful.sort_map neg_count Int.compare l)
+    end
 end
 
 (* -------------------------------------------------------------------------
@@ -621,12 +621,22 @@ local
      definitions reduced to the branch of k, computed once for each k.  The
      compset has only these and the equality of word literals, so that the
      branch is left as it is (the words compset would, for one, expand the
-     bit_field_insert of a write of fflags). *)
-  val csr_cmp =
-    computeLib.add_conv
-      (``$= : 'a word -> 'a word -> bool``, 2, bitstringLib.word_eq_CONV)
-      (computeLib.add_thms [CSRMap_def, write'CSRMap_def]
-         (computeLib.copy computeLib.bool_compset))
+     bit_field_insert of a write of fflags), besides the rewrites of
+     computeLib.bool_compset, listed here because the compset interface of
+     computeLib differs between HOL versions. *)
+  val csr_cbv =
+    computeLib.compset_conv
+      (computeLib.new_compset
+         (computeLib.strictify_thm boolTheory.LET_DEF ::
+          computeLib.strictify_thm boolTheory.literal_case_DEF ::
+          List.map computeLib.lazyfy_thm
+            [boolTheory.COND_CLAUSES, boolTheory.COND_ID,
+             boolTheory.NOT_CLAUSES, boolTheory.AND_CLAUSES,
+             boolTheory.OR_CLAUSES, boolTheory.IMP_CLAUSES,
+             boolTheory.EQ_CLAUSES] @
+          [CSRMap_def, write'CSRMap_def]))
+      [computeLib.Convs
+         [(``$= : 'a word -> 'a word -> bool``, 2, bitstringLib.word_eq_CONV)]]
   val instances = ref (Redblackmap.mkDict Arbnum.compare)
   fun csr_instances k =
     case Redblackmap.peek (!instances, k) of
@@ -636,7 +646,7 @@ local
            val c = wordsSyntax.mk_n2w (numSyntax.mk_numeral k, ``:12``)
            val v = Term.mk_var ("v", ``:word64``)
            fun inst tm =
-             Drule.GEN_ALL (computeLib.CBV_CONV csr_cmp (Term.mk_comb (tm, s)))
+             Drule.GEN_ALL (csr_cbv (Term.mk_comb (tm, s)))
            val thms =
              [inst ``riscv$CSRMap ^c``, inst ``riscv$write'CSRMap (^v, ^c)``]
          in

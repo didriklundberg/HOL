@@ -21,6 +21,39 @@ val () =
 
 fun uprove a b = utilsLib.STRIP_UNDISCH (Q.prove (a, b))
 
+(* r with f := r.f = r, for every field f of a record type: the
+   <type>_fupdselfid theorems that the record package of HOL develop proves
+   and adds to the simpset of the type.  Proved here, and given to the
+   proofs that need them, so that this script also builds with HOL
+   versions whose record package does not have them (trindemossen-2). *)
+local
+  fun fupdselfid ty =
+    let
+      val r = Term.mk_var ("r", ty)
+      val rwts =
+        TypeBase.accessors_of ty @ TypeBase.updates_of ty @
+        [combinTheory.K_THM]
+      fun field (_, {accessor, fupd, ...} : TypeBasePure.rcd_fieldinfo) =
+        let
+          val a = Term.mk_comb (accessor, r)
+          val k = combinSyntax.mk_K_1 (a, Term.type_of a)
+        in
+          Drule.GEN_ALL
+            (Tactical.prove
+               (boolSyntax.mk_eq (Term.list_mk_comb (fupd, [k, r]), r),
+                bossLib.Cases_on `^r` \\ REWRITE_TAC rwts))
+        end
+    in
+      Drule.LIST_CONJ (List.map field (TypeBase.fields_of ty))
+    end
+in
+  val riscv_state_fupdselfid = fupdselfid ``:riscv_state``
+  val MachineCSR_fupdselfid = fupdselfid ``:MachineCSR``
+  val mstatus_fupdselfid = fupdselfid ``:mstatus``
+  val UserCSR_fupdselfid = fupdselfid ``:UserCSR``
+  val FPCSR_fupdselfid = fupdselfid ``:FPCSR``
+end
+
 (* ------------------------------------------------------------------------
    Simplified Fetch and Next functions
    ------------------------------------------------------------------------ *)
@@ -479,7 +512,7 @@ Proof
         haveRVC_def, write'PC_def]
   \\ wordsLib.Cases_on_word_value `(s.c_MCSR s.procID).mstatus.MPP`
   \\ simp [privilege_def, privLevel_def, riscv_state_component_equality,
-           combinTheory.UPDATE_EQ]
+           combinTheory.UPDATE_EQ, mstatus_fupdselfid]
 QED
 
 (* Trap entry to M-mode (P §3.1.6.1 p.32, §3.1.14-3.1.16 p.48-53): mcause,

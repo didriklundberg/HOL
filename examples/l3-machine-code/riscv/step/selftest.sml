@@ -1686,9 +1686,9 @@ end
 fun must_step_with checks name h inst =
   let
     val th = SOME (riscv_step_hex h)
-             handle e as HOL_ERR herr =>
-               if String.isPrefix "instruction traps"
-                    (Feedback.message_of herr)
+             handle e as HOL_ERR _ =>
+               if String.isSubstring "instruction traps"
+                    (Feedback.exn_to_string e)
                  then NONE
                else raise e
   in
