@@ -123,15 +123,16 @@ The signature is written on every exit except status 3 and 64.
   an earlier segment has already written is zeroed explicitly (a large
   `.bss` costs nothing). Overlapping segments are allowed, the later one
   wins; sail-riscv refuses to load them. All other memory reads as zero;
-  there are no address-range checks, and the only devices are HTIF and the
-  CLINT words (below).
+  there are no address-range checks and no PMAs (`../doc/design-smode.md`
+  §6 Q9), and the only devices are HTIF and the CLINT words (below).
 - **Symbols**: from the ELF's symbol table (`tohost`, `begin_signature`,
   `end_signature`), with sail-riscv's rule (`ELF::symbols()`): only defined
   symbols (`st_shndx` not `SHN_UNDEF`) of type `NOTYPE`, `OBJECT`, `FUNC` or
   `COMMON` count, and if several have the same name the last one in the
   table wins, so a global beats a local of that name (locals come first in
   an ELF symbol table). A stripped ELF, or one without section headers
-  (`e_shnum` = 0), loads with no symbols, so HTIF is off.
+  (`e_shnum` = 0), loads with no symbols, so HTIF is off. Symbol values
+  are taken as physical addresses, where the ELF is loaded, as in sail.
 - **ELF checks**: the file must be a little-endian ELF64 with `e_machine` =
   `EM_RISCV` (243); anything else is rejected with exit status 64, as sail
   rejects a non-RISC-V ELF.
@@ -148,14 +149,18 @@ The signature is written on every exit except status 3 and 64.
   as a write of `misa` could; the model then decodes no 16-bit instruction
   and requires 4-byte aligned fetch and jump targets (`haveRVC` in the
   spec, which reads `misa.C`), and bit 1 of `mepc`/`sepc` reads as zero.
-- **HTIF**: if the ELF has a `tohost` symbol, every store that overlaps the
-  8 bytes at `tohost` is passed through a copy of sail-riscv's `htif_store`
+- **HTIF**: if the ELF has a `tohost` symbol, every store whose physical
+  address overlaps the 8 bytes at `tohost` is passed through a copy of
+  sail-riscv's `htif_store`
   (`model/sys/platform.sail` in sail): an 8-byte store, or a store to the
   upper word, or the same lower word written three times, completes a
   command. Device 0 with bit 0 set is exit with code `payload >> 1`; device 1
   command 1 writes a character (to stdout, or stderr with `--trace`) and
   clears `tohost`. So a riscv-tests `RVTEST_PASS` (`sw` of the lower word,
-  then of the upper word) stops after the second store, as in sail.
+  then of the upper word) stops after the second store, as in sail. The
+  riscv-tests `-v` environment stores to `tohost` from S-mode through a
+  virtual address; the store is recorded with its physical address
+  (below), which is what HTIF matches, as in sail.
   With `--tohost-exit` the same HTIF logic runs, and in addition the run
   stops at the first store to `tohost` after which `tohost` holds a
   non-zero value with device field (bits 63:56) 0: odd values are exit
@@ -255,9 +260,10 @@ afterwards:
   fetch.
 - **Memory reads** (`--trace-mem-reads`): address and value from
   `recordLoad`, width from the decoded instruction. `LR.W`/`LR.D` call no
-  `recordLoad`; for an `LR` that does not trap the harness takes the address
-  from `ReserveLoad`, which the `LR` has just set, and reads the 4 or 8
-  bytes back from memory (an `LR` does not change memory).
+  `recordLoad`; for an `LR` that does not trap the harness takes the
+  address from `ReserveLoad`, which the `LR` has just set to the physical
+  address it reserved, and reads the 4 or 8 bytes back from memory (an
+  `LR` does not change memory).
 - **Traps**: the log entry of `takeTrap`, `trapping from <p> to <q> at pc
   ... [exc] <cause>` or `[intr]`. `takeTrap` writes a trap value for every
   exception (zero where the spec defines none), so `tval` is printed for
@@ -266,18 +272,23 @@ afterwards:
   checks for interrupts at the start of `Next`), so it has `inst=-` and no
   other effects than the trap-entry CSRs.
 
-Addresses are those that the store or load computed. The model implements
-only `satp.MODE` = Bare, so they are physical addresses.
+Memory addresses (`mr`, `mw`) are physical: the spec gives `recordLoad` and
+`recordStore` the address after translation, which is what sail logs
+(`../doc/design-smode.md` S30). The `pc` and the trap value are virtual
+addresses. The page-table walk reads PTEs without a log entry or a
+`StateDelta`, so they are never traced (S6), and under Svade it writes
+none.
 
 ## compare.py
 
     compare.py [options] <elf>
 
 Runs `riscv-sim --trace` and `sail_riscv_sim --trace-instr --trace-reg
---trace-mem --trace-exception --trace-interrupt --trace-step --trace-output
-FILE` on the ELF, normalises sail's trace, compares step by step and prints
-the first divergences with the preceding steps of both traces. Exit status
-0 if the traces agree, 1 on a divergence, 2 on a usage or tool error.
+--trace-mem --trace-exception --trace-interrupt --trace-step --trace-ptw
+--trace-output FILE` on the ELF, normalises sail's trace, compares step by
+step and prints the first divergences with the preceding steps of both
+traces. Exit status 0 if the traces agree, 1 on a divergence, 2 on a usage
+or tool error.
 Python 3 standard library only.
 
 A tool error is anything that means the two emulators were not both run on
@@ -306,7 +317,11 @@ NAME[,NAME]`, `--csr-alias MODEL=SAIL`, `--save-traces DIR`, and
 Per step it compares pc, instruction bits, GPR writes, FPR writes, memory
 writes (and reads with `--mem-reads`), and trap or interrupt cause; the trap
 value only when both traces have one. Different trace lengths are a
-divergence.
+divergence. Memory accesses are compared by physical address, the pc and
+the trap value as virtual addresses, which is how both emulators log them.
+sail's reads of page-table entries are dropped (below): the model's are not
+traced, and how many sail makes depends on its TLB, which the model does
+not have (`../doc/design-smode.md` S4, S6).
 
 CSRs are compared as **state**, because the two models write CSRs
 implicitly in different places (sail logs `mstatus` at every FP register
@@ -330,7 +345,9 @@ ignored by default (`--no-default-ignores` to compare them), because the
 two emulators drive them from timers of their own; both now start with
 `mtimecmp` = 0 and so with MTIP set before the first instruction, and they
 agree on the riscv-tests below also with `--no-default-ignores`.
-CSRs that only one side writes are listed in a note, not compared.
+CSRs that only one side writes are listed in a note, not compared. `satp`
+and `menvcfg` are compared like the others: riscv-sim watches every CSR
+that `is_CSR_defined` accepts, and sail logs every write of them.
 
 `fflags`, `frm` and `fcsr` are views of one register, but sail logs a CSR
 instruction's write only under the name the instruction used (and `fflags`
@@ -364,6 +381,14 @@ the smoke tests and on `rv64uf-p-fadd` from riscv-tests:
   mark an exception and give its trap value; `Handling interrupt: ...` and
   `handling int#...` mark an interrupt. The cause is the value sail then
   logs for `mcause` (or `scause`).
+- `PTW: Start`, `PTW: Step`, `PTW: Success` and `PTW: Failed`
+  (`--trace-ptw`) mark one page-table walk: each level is `PTW: Start`, the
+  read of the PTE as a `mem[R,...]` line (none if the PMP denies it) and
+  `PTW: Step`. The PTW lines, and a memory read between `PTW: Start` and
+  the next PTW line, are dropped: sail's TLB decides how many walks there
+  are (`../doc/design-smode.md` §4.1, which found the normalised traces of
+  the `-v` riscv-tests otherwise identical with and without the TLB).
+  There are no PTE writes, since A and D are managed by software (Svade).
 - `ret-ing from ...` and WFI/WRS wait messages are ignored; any other line is
   reported on stderr and ignored. With `wfi_is_nop` false and
   `max_time_to_wait` 0, as in `rv64gc_mu_pmp.json`, a WFI that does not
@@ -386,18 +411,20 @@ programs also showed that the model did not NaN-box single-precision results
 (F7) and that its `fmadd.d` rounded twice (F9). These were audit findings,
 not harness problems.
 
-With `--sail-config-override` of an RV64GC M/U configuration with PMP
-(`rv64gc_mu_pmp.json`), the traces of 132 of the 134
+With `--sail-config-override` of an RV64GC M/S/U configuration with PMP
+and Sv39, Sv48 and Sv57 (`rv64gc_mu_pmp.json`), the traces of all 134
 `rv64{ui,um,ua,uf,ud,uc,mi,si}-p-*` riscv-tests agree with sail, those of
 `rv64uf` and `rv64ud` with `--ignore-csr fcsr` (above). Among them are
 `rv64mi-p-csr`, which diverged at step 171 until `fmv.w.x` NaN-boxed its
-result (F7), and `rv64ui-p-ma_data` and `rv64mi-p-breakpoint`, which fail on
-both emulators (below). The other two, `rv64si-p-dirty` and
-`rv64si-p-icache-alias`, need Sv39 and reach addresses outside sail's
-memory, which fault in sail but not in the harness (no address-range
-checks, above). With `mstatus.FS` Off, every F and D instruction, the RV64C
-FP loads and stores and each CSR instruction on `fflags`, `frm` and `fcsr`
-must raise illegal instruction; `tests/fsoff-all.S`, which runs all of them,
+result (F7), `rv64ui-p-ma_data` and `rv64mi-p-breakpoint`, which fail on
+both emulators (below), and `rv64si-p-dirty` and `rv64si-p-icache-alias`,
+which need Sv39 and diverged until the model translated addresses (WP7).
+109 of the 110 `rv64{ui,um,ua,uf,ud,uc}-v-*` tests, which run in U-mode
+under Sv39 with S-mode handling their page faults, pass and agree; the
+other is `rv64ui-v-ma_data` (below). With `mstatus.FS` Off, every F and D
+instruction, the RV64C FP loads and stores and each CSR instruction on
+`fflags`, `frm` and `fcsr` must raise illegal instruction;
+`tests/fsoff-all.S`, which runs all of them,
 agrees with sail. It diverged at its `fle.s`, which ran and set FS to Dirty,
 until FLE.S was given the FS check that the other F and D instructions
 have. Within the model's scope, the one known divergence is rounding mode
@@ -470,13 +497,17 @@ To add a regression program `tests/foo.S`:
 
 ## The riscv-tests corpus
 
-`corpus.py` runs every `rv64*-p-*` ELF in `CORPUS` (the prebuilt
-[riscv-tests](https://github.com/riscv-software-src/riscv-tests), which
-end through `tohost`) and checks the outcomes against
-`tests/corpus.expected`:
+`corpus.py` runs every `rv64*-p-*` and `rv64*-v-*` ELF in `CORPUS` (the
+prebuilt [riscv-tests](https://github.com/riscv-software-src/riscv-tests),
+which end through `tohost`) and checks the outcomes against
+`tests/corpus.expected`. The `-p` tests run in physical memory; the `-v`
+tests run the same code in U-mode under Sv39, with the riscv-tests
+environment's `vm.c` in S-mode mapping pages on demand from its page-fault
+handler:
 
 - `make corpus` (`corpus.py run`) runs each test on riscv-sim and prints a
-  table per suite (`rv64ui`, `rv64mi`, ...) of passes and failures, then
+  table per suite (`rv64ui`, `rv64mi`, ..., and `rv64ui-v`, ... for the
+  `-v` tests) of passes and failures, then
   each failure with its reason: the riscv-tests `TESTNUM` from `tohost`,
   riscv-sim's exit status and message, an `UNDEFINED` message, and the
   note from the expected file.
@@ -505,37 +536,56 @@ After a change of outcome that is intended (a fix, a new extension),
 expected failure or divergence should have one, so review the diff of the
 file before committing it.
 
-With the default paths and `rv64gc_mu_pmp.json` the corpus has 199
-`rv64*-p-*` tests. riscv-sim passes 132 and sail agrees on 196:
+With the default paths and `rv64gc_mu_pmp.json` the corpus has 372 tests,
+199 `rv64*-p-*` and 173 `rv64*-v-*`. riscv-sim passes 246 and sail agrees
+on 354:
 
-- the 134 `rv64{ui,um,ua,uc,uf,ud,mi,si}` tests behave as described under
-  "Results so far" and "Known not to work yet": 130 pass, 132 agree;
-- the 62 tests of `rv64uzba`, `uzbb`, `uzbc`, `uzbkb`, `uzbkx`, `uzbs`,
-  `uzfh` (but `recoding`, which passes), `uzicond` and `mzicbo` fail with
-  an illegal-instruction trap that riscv-tests reports as code 668 or 669
-  (1337 | `TESTNUM`), because the model has none of these extensions, and
-  agree with sail, which with this configuration has none of them either;
-- `rv64uziccid-p-ziccid` passes and agrees, and `rv64ssvnapot-p-napot`
-  (Sv39 and Svnapot) fails and diverges like the Sv39 tests.
+- the 134 `rv64{ui,um,ua,uc,uf,ud,mi,si}-p` tests behave as described
+  under "Results so far" and "Known not to work yet": 132 pass, all agree;
+- the 62 `-p` tests of `rv64uzba`, `uzbb`, `uzbc`, `uzbkb`, `uzbkx`,
+  `uzbs`, `uzfh` (but `recoding`, which passes), `uzicond` and `mzicbo`
+  fail with an illegal-instruction trap that riscv-tests reports as code
+  668 or 669 (1337 | `TESTNUM`), because the model has none of these
+  extensions, and agree with sail, which with this configuration has none
+  of them either;
+- `rv64uziccid-p-ziccid` passes and agrees, and so does
+  `rv64ssvnapot-p-napot`: Svnapot is absent, so its PTE with N set gives a
+  page fault, which the test accepts;
+- of the 110 `rv64{ui,um,ua,uc,uf,ud}-v` tests 109 pass and agree;
+  `rv64ui-v-ma_data` fails and diverges (below);
+- of the 63 `-v` tests of the other extensions, `uzfh-v-recoding` and
+  `uziccid-v-ziccid` pass and agree. The others fail with exit code 420:
+  their illegal-instruction trap is not delegated, so it goes to `vm.c`'s
+  `wtf` in M-mode, which calls `terminate(841)`. In `uzba`, `uzbb`,
+  `uzbkb` and `uzbs` `vm.c` itself, built with the extension, runs the
+  instruction while it boots, and they agree with sail. In `uzbc`,
+  `uzbkx`, `uzfh` and `uzicond` the test runs it in U-mode, `wtf` stores
+  below address 0 with U-mode's `sp`, and they diverge there (below).
 
 ## Known not to work yet
 
-- **Four riscv-tests.** Of the 134 `rv64{ui,um,ua,uf,ud,uc,mi,si}-p-*`
-  tests, 130 pass. The other four fail on sail too: `rv64ui-p-ma_data` by
+- **Three riscv-tests.** Of the 134 `rv64{ui,um,ua,uf,ud,uc,mi,si}-p-*`
+  tests, 132 pass. The other two fail on sail too: `rv64ui-p-ma_data` by
   design (misaligned accesses trap), `rv64mi-p-breakpoint` because it needs
-  Sdtrig, `rv64si-p-dirty` and `rv64si-p-icache-alias` because they need
-  Sv39. The other suites of the corpus test extensions that the model does
-  not have (above, "The riscv-tests corpus"); `tests/corpus.expected` lists
-  every expected failure with its reason. riscv-arch-test has not been
-  rerun on this model.
+  Sdtrig. Of the 110 `rv64{ui,um,ua,uf,ud,uc}-v-*` tests, 109 pass:
+  `rv64ui-v-ma_data` fails by design too, and its misaligned-access trap,
+  which `vm.c` does not delegate, ends in `vm.c`'s `wtf` in M-mode with
+  U-mode's `sp`, 0. The first store of `wtf`, to 0xfffffffffffffff8, is
+  outside sail's memory map, so sail faults there and loops, while the
+  harness, which has no PMAs, goes on to `terminate(841)`; the traces
+  diverge at that store. The other suites of the corpus test extensions
+  that the model does not have (above, "The riscv-tests corpus");
+  `tests/corpus.expected` lists every expected failure with its reason.
+  riscv-arch-test has not been rerun on this model.
 - **FP programs** need `mstatus.FS` set first (above), on both emulators.
   Rounding mode RMM raises illegal instruction in the model except in the
   exact conversions `fcvt.d.s`, `fcvt.d.w` and `fcvt.d.wu` (audit F13,
   deferred: neither L3's FP library nor HOL's binary_ieee rounds ties away
   from zero).
-- Only bare-metal, little-endian ELF64 files; no virtual memory (above); no
-  devices other than HTIF and the CLINT words; HTIF syscall-proxy requests
-  (device 0 with bit 0 clear) are ignored with a warning, as in sail.
+- Only bare-metal, little-endian ELF64 files; no PMAs, so accesses outside
+  sail's memory map do not fault (above); no devices other than HTIF and
+  the CLINT words; HTIF syscall-proxy requests (device 0 with bit 0 clear)
+  are ignored with a warning, as in sail.
 
 ## Files and provenance
 

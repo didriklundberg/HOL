@@ -1,4 +1,4 @@
-# Expected outcomes of the riscv-tests corpus (rv64*-p-*) on riscv-sim and
+# Expected outcomes of the riscv-tests corpus (rv64*-[pv]-*) on riscv-sim and
 # against sail-riscv; checked by `make corpus` (column riscv-sim) and `make
 # compare-corpus` (column compare), rewritten by `make corpus-update`.
 # Outcomes are those of corpus.py (see its docstring); "-" is not
@@ -6,7 +6,7 @@
 # or divergence one.
 #
 # test | riscv-sim | compare | note
-rv64mi-p-breakpoint       | fail: test 2   | agree             | needs Sdtrig (triggers); fails the same way on sail
+rv64mi-p-breakpoint       | fail: test 2   | agree              | needs Sdtrig (triggers); fails the same way on sail
 rv64mi-p-csr              | pass           | agree
 rv64mi-p-illegal          | pass           | agree
 rv64mi-p-instret_overflow | pass           | agree
@@ -23,15 +23,15 @@ rv64mi-p-sd-misaligned    | pass           | agree
 rv64mi-p-sh-misaligned    | pass           | agree
 rv64mi-p-sw-misaligned    | pass           | agree
 rv64mi-p-zicntr           | pass           | agree
-rv64mzicbo-p-zero         | fail: test 668 | agree             | Zicboz is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64mzicbo-p-zero         | fail: test 668 | agree              | Zicboz is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
 rv64si-p-csr              | pass           | agree
-rv64si-p-dirty            | fail: test 3   | diverge: step 89  | needs Sv39; sail faults on an address outside its memory map, the harness has no range checks
-rv64si-p-icache-alias     | fail: test 2   | diverge: step 115 | needs Sv39; sail faults on an address outside its memory map, the harness has no range checks
+rv64si-p-dirty            | pass           | agree
+rv64si-p-icache-alias     | pass           | agree
 rv64si-p-ma_fetch         | pass           | agree
 rv64si-p-sbreak           | pass           | agree
 rv64si-p-scall            | pass           | agree
 rv64si-p-wfi              | pass           | agree
-rv64ssvnapot-p-napot      | fail: test 1   | diverge: step 142 | needs Sv39 and Svnapot; sail faults on an address outside its memory map, the harness has no range checks
+rv64ssvnapot-p-napot      | pass           | agree              | Svnapot is absent ([S12]): the PTE with N set gives a store page fault, which the test accepts
 rv64ua-p-amoadd_d         | pass           | agree
 rv64ua-p-amoadd_w         | pass           | agree
 rv64ua-p-amoand_d         | pass           | agree
@@ -51,7 +51,27 @@ rv64ua-p-amoswap_w        | pass           | agree
 rv64ua-p-amoxor_d         | pass           | agree
 rv64ua-p-amoxor_w         | pass           | agree
 rv64ua-p-lrsc             | pass           | agree
+rv64ua-v-amoadd_d         | pass           | agree
+rv64ua-v-amoadd_w         | pass           | agree
+rv64ua-v-amoand_d         | pass           | agree
+rv64ua-v-amoand_w         | pass           | agree
+rv64ua-v-amomax_d         | pass           | agree
+rv64ua-v-amomax_w         | pass           | agree
+rv64ua-v-amomaxu_d        | pass           | agree
+rv64ua-v-amomaxu_w        | pass           | agree
+rv64ua-v-amomin_d         | pass           | agree
+rv64ua-v-amomin_w         | pass           | agree
+rv64ua-v-amominu_d        | pass           | agree
+rv64ua-v-amominu_w        | pass           | agree
+rv64ua-v-amoor_d          | pass           | agree
+rv64ua-v-amoor_w          | pass           | agree
+rv64ua-v-amoswap_d        | pass           | agree
+rv64ua-v-amoswap_w        | pass           | agree
+rv64ua-v-amoxor_d         | pass           | agree
+rv64ua-v-amoxor_w         | pass           | agree
+rv64ua-v-lrsc             | pass           | agree
 rv64uc-p-rvc              | pass           | agree
+rv64uc-v-rvc              | pass           | agree
 rv64ud-p-fadd             | pass           | agree
 rv64ud-p-fclass           | pass           | agree
 rv64ud-p-fcmp             | pass           | agree
@@ -64,6 +84,18 @@ rv64ud-p-ldst             | pass           | agree
 rv64ud-p-move             | pass           | agree
 rv64ud-p-recoding         | pass           | agree
 rv64ud-p-structural       | pass           | agree
+rv64ud-v-fadd             | pass           | agree
+rv64ud-v-fclass           | pass           | agree
+rv64ud-v-fcmp             | pass           | agree
+rv64ud-v-fcvt             | pass           | agree
+rv64ud-v-fcvt_w           | pass           | agree
+rv64ud-v-fdiv             | pass           | agree
+rv64ud-v-fmadd            | pass           | agree
+rv64ud-v-fmin             | pass           | agree
+rv64ud-v-ldst             | pass           | agree
+rv64ud-v-move             | pass           | agree
+rv64ud-v-recoding         | pass           | agree
+rv64ud-v-structural       | pass           | agree
 rv64uf-p-fadd             | pass           | agree
 rv64uf-p-fclass           | pass           | agree
 rv64uf-p-fcmp             | pass           | agree
@@ -75,6 +107,17 @@ rv64uf-p-fmin             | pass           | agree
 rv64uf-p-ldst             | pass           | agree
 rv64uf-p-move             | pass           | agree
 rv64uf-p-recoding         | pass           | agree
+rv64uf-v-fadd             | pass           | agree
+rv64uf-v-fclass           | pass           | agree
+rv64uf-v-fcmp             | pass           | agree
+rv64uf-v-fcvt             | pass           | agree
+rv64uf-v-fcvt_w           | pass           | agree
+rv64uf-v-fdiv             | pass           | agree
+rv64uf-v-fmadd            | pass           | agree
+rv64uf-v-fmin             | pass           | agree
+rv64uf-v-ldst             | pass           | agree
+rv64uf-v-move             | pass           | agree
+rv64uf-v-recoding         | pass           | agree
 rv64ui-p-add              | pass           | agree
 rv64ui-p-addi             | pass           | agree
 rv64ui-p-addiw            | pass           | agree
@@ -100,7 +143,7 @@ rv64ui-p-lhu              | pass           | agree
 rv64ui-p-lui              | pass           | agree
 rv64ui-p-lw               | pass           | agree
 rv64ui-p-lwu              | pass           | agree
-rv64ui-p-ma_data          | fail: test 668 | agree             | by design: misaligned accesses trap, as in sail
+rv64ui-p-ma_data          | fail: test 668 | agree              | by design: misaligned accesses trap, as in sail
 rv64ui-p-or               | pass           | agree
 rv64ui-p-ori              | pass           | agree
 rv64ui-p-sb               | pass           | agree
@@ -129,6 +172,60 @@ rv64ui-p-subw             | pass           | agree
 rv64ui-p-sw               | pass           | agree
 rv64ui-p-xor              | pass           | agree
 rv64ui-p-xori             | pass           | agree
+rv64ui-v-add              | pass           | agree
+rv64ui-v-addi             | pass           | agree
+rv64ui-v-addiw            | pass           | agree
+rv64ui-v-addw             | pass           | agree
+rv64ui-v-and              | pass           | agree
+rv64ui-v-andi             | pass           | agree
+rv64ui-v-auipc            | pass           | agree
+rv64ui-v-beq              | pass           | agree
+rv64ui-v-bge              | pass           | agree
+rv64ui-v-bgeu             | pass           | agree
+rv64ui-v-blt              | pass           | agree
+rv64ui-v-bltu             | pass           | agree
+rv64ui-v-bne              | pass           | agree
+rv64ui-v-fence_i          | pass           | agree
+rv64ui-v-jal              | pass           | agree
+rv64ui-v-jalr             | pass           | agree
+rv64ui-v-lb               | pass           | agree
+rv64ui-v-lbu              | pass           | agree
+rv64ui-v-ld               | pass           | agree
+rv64ui-v-ld_st            | pass           | agree
+rv64ui-v-lh               | pass           | agree
+rv64ui-v-lhu              | pass           | agree
+rv64ui-v-lui              | pass           | agree
+rv64ui-v-lw               | pass           | agree
+rv64ui-v-lwu              | pass           | agree
+rv64ui-v-ma_data          | fail: test 420 | diverge: step 2787 | by design: misaligned accesses trap ([D55]); the trap is not delegated, so it goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64ui-v-or               | pass           | agree
+rv64ui-v-ori              | pass           | agree
+rv64ui-v-sb               | pass           | agree
+rv64ui-v-sd               | pass           | agree
+rv64ui-v-sh               | pass           | agree
+rv64ui-v-simple           | pass           | agree
+rv64ui-v-sll              | pass           | agree
+rv64ui-v-slli             | pass           | agree
+rv64ui-v-slliw            | pass           | agree
+rv64ui-v-sllw             | pass           | agree
+rv64ui-v-slt              | pass           | agree
+rv64ui-v-slti             | pass           | agree
+rv64ui-v-sltiu            | pass           | agree
+rv64ui-v-sltu             | pass           | agree
+rv64ui-v-sra              | pass           | agree
+rv64ui-v-srai             | pass           | agree
+rv64ui-v-sraiw            | pass           | agree
+rv64ui-v-sraw             | pass           | agree
+rv64ui-v-srl              | pass           | agree
+rv64ui-v-srli             | pass           | agree
+rv64ui-v-srliw            | pass           | agree
+rv64ui-v-srlw             | pass           | agree
+rv64ui-v-st_ld            | pass           | agree
+rv64ui-v-sub              | pass           | agree
+rv64ui-v-subw             | pass           | agree
+rv64ui-v-sw               | pass           | agree
+rv64ui-v-xor              | pass           | agree
+rv64ui-v-xori             | pass           | agree
 rv64um-p-div              | pass           | agree
 rv64um-p-divu             | pass           | agree
 rv64um-p-divuw            | pass           | agree
@@ -142,66 +239,142 @@ rv64um-p-rem              | pass           | agree
 rv64um-p-remu             | pass           | agree
 rv64um-p-remuw            | pass           | agree
 rv64um-p-remw             | pass           | agree
-rv64uzba-p-add_uw         | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzba-p-sh1add         | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzba-p-sh1add_uw      | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzba-p-sh2add         | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzba-p-sh2add_uw      | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzba-p-sh3add         | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzba-p-sh3add_uw      | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzba-p-slli_uw        | fail: test 669 | agree             | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-andn           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-clz            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-clzw           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-cpop           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-cpopw          | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-ctz            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-ctzw           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-max            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-maxu           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-min            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-minu           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-orc_b          | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-orn            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-rev8           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-rol            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-rolw           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-ror            | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-rori           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-roriw          | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-rorw           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-sext_b         | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-sext_h         | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-xnor           | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbb-p-zext_h         | fail: test 669 | agree             | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbc-p-clmul          | fail: test 668 | agree             | Zbc is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbc-p-clmulh         | fail: test 668 | agree             | Zbc is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbc-p-clmulr         | fail: test 668 | agree             | Zbc is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbkb-p-brev8         | fail: test 669 | agree             | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbkb-p-pack          | fail: test 669 | agree             | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbkb-p-packh         | fail: test 669 | agree             | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbkb-p-packw         | fail: test 669 | agree             | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbkx-p-xperm4        | fail: test 669 | agree             | Zbkx is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbkx-p-xperm8        | fail: test 669 | agree             | Zbkx is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbs-p-bclr           | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbs-p-bclri          | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbs-p-bext           | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbs-p-bexti          | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbs-p-binv           | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbs-p-binvi          | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbs-p-bset           | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzbs-p-bseti          | fail: test 669 | agree             | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-fadd           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-fclass         | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-fcmp           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-fcvt           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-fcvt_w         | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-fdiv           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-fmadd          | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-fmin           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-ldst           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzfh-p-move           | fail: test 669 | agree             | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64um-v-div              | pass           | agree
+rv64um-v-divu             | pass           | agree
+rv64um-v-divuw            | pass           | agree
+rv64um-v-divw             | pass           | agree
+rv64um-v-mul              | pass           | agree
+rv64um-v-mulh             | pass           | agree
+rv64um-v-mulhsu           | pass           | agree
+rv64um-v-mulhu            | pass           | agree
+rv64um-v-mulw             | pass           | agree
+rv64um-v-rem              | pass           | agree
+rv64um-v-remu             | pass           | agree
+rv64um-v-remuw            | pass           | agree
+rv64um-v-remw             | pass           | agree
+rv64uzba-p-add_uw         | fail: test 669 | agree              | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh1add         | fail: test 669 | agree              | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh1add_uw      | fail: test 669 | agree              | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh2add         | fail: test 669 | agree              | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh2add_uw      | fail: test 669 | agree              | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh3add         | fail: test 669 | agree              | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-sh3add_uw      | fail: test 669 | agree              | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-p-slli_uw        | fail: test 669 | agree              | Zba is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzba-v-add_uw         | fail: test 420 | agree              | Zba is not in the model: vm.c, built with Zba, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzba-v-sh1add         | fail: test 420 | agree              | Zba is not in the model: vm.c, built with Zba, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzba-v-sh1add_uw      | fail: test 420 | agree              | Zba is not in the model: vm.c, built with Zba, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzba-v-sh2add         | fail: test 420 | agree              | Zba is not in the model: vm.c, built with Zba, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzba-v-sh2add_uw      | fail: test 420 | agree              | Zba is not in the model: vm.c, built with Zba, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzba-v-sh3add         | fail: test 420 | agree              | Zba is not in the model: vm.c, built with Zba, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzba-v-sh3add_uw      | fail: test 420 | agree              | Zba is not in the model: vm.c, built with Zba, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzba-v-slli_uw        | fail: test 420 | agree              | Zba is not in the model: vm.c, built with Zba, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-p-andn           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-clz            | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-clzw           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-cpop           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-cpopw          | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-ctz            | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-ctzw           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-max            | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-maxu           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-min            | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-minu           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-orc_b          | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-orn            | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rev8           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rol            | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rolw           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-ror            | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rori           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-roriw          | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-rorw           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-sext_b         | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-sext_h         | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-xnor           | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-p-zext_h         | fail: test 669 | agree              | Zbb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbb-v-andn           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-clz            | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-clzw           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-cpop           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-cpopw          | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-ctz            | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-ctzw           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-max            | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-maxu           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-min            | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-minu           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-orc_b          | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-orn            | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-rev8           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-rol            | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-rolw           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-ror            | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-rori           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-roriw          | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-rorw           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-sext_b         | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-sext_h         | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-xnor           | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbb-v-zext_h         | fail: test 420 | agree              | Zbb is not in the model: vm.c, built with Zbb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbc-p-clmul          | fail: test 668 | agree              | Zbc is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbc-p-clmulh         | fail: test 668 | agree              | Zbc is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbc-p-clmulr         | fail: test 668 | agree              | Zbc is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbc-v-clmul          | fail: test 420 | diverge: step 2794 | Zbc is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzbc-v-clmulh         | fail: test 420 | diverge: step 2794 | Zbc is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzbc-v-clmulr         | fail: test 420 | diverge: step 2794 | Zbc is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzbkb-p-brev8         | fail: test 669 | agree              | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkb-p-pack          | fail: test 669 | agree              | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkb-p-packh         | fail: test 669 | agree              | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkb-p-packw         | fail: test 669 | agree              | Zbkb is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkb-v-brev8         | fail: test 420 | agree              | Zbkb is not in the model: vm.c, built with Zbkb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbkb-v-pack          | fail: test 420 | agree              | Zbkb is not in the model: vm.c, built with Zbkb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbkb-v-packh         | fail: test 420 | agree              | Zbkb is not in the model: vm.c, built with Zbkb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbkb-v-packw         | fail: test 420 | agree              | Zbkb is not in the model: vm.c, built with Zbkb, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbkx-p-xperm4        | fail: test 669 | agree              | Zbkx is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkx-p-xperm8        | fail: test 669 | agree              | Zbkx is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbkx-v-xperm4        | fail: test 420 | diverge: step 2788 | Zbkx is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzbkx-v-xperm8        | fail: test 420 | diverge: step 2796 | Zbkx is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzbs-p-bclr           | fail: test 669 | agree              | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bclri          | fail: test 669 | agree              | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bext           | fail: test 669 | agree              | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bexti          | fail: test 669 | agree              | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-binv           | fail: test 669 | agree              | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-binvi          | fail: test 669 | agree              | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bset           | fail: test 669 | agree              | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-p-bseti          | fail: test 669 | agree              | Zbs is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzbs-v-bclr           | fail: test 420 | agree              | Zbs is not in the model: vm.c, built with Zbs, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbs-v-bclri          | fail: test 420 | agree              | Zbs is not in the model: vm.c, built with Zbs, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbs-v-bext           | fail: test 420 | agree              | Zbs is not in the model: vm.c, built with Zbs, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbs-v-bexti          | fail: test 420 | agree              | Zbs is not in the model: vm.c, built with Zbs, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbs-v-binv           | fail: test 420 | agree              | Zbs is not in the model: vm.c, built with Zbs, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbs-v-binvi          | fail: test 420 | agree              | Zbs is not in the model: vm.c, built with Zbs, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbs-v-bset           | fail: test 420 | agree              | Zbs is not in the model: vm.c, built with Zbs, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzbs-v-bseti          | fail: test 420 | agree              | Zbs is not in the model: vm.c, built with Zbs, executes one in M-mode while it boots; the illegal-instruction trap goes to vm.c's wtf, which ends with terminate(841), exit code 420; fails the same way on sail
+rv64uzfh-p-fadd           | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fclass         | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fcmp           | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fcvt           | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fcvt_w         | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fdiv           | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fmadd          | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-fmin           | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-ldst           | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzfh-p-move           | fail: test 669 | agree              | Zfh is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
 rv64uzfh-p-recoding       | pass           | agree
+rv64uzfh-v-fadd           | fail: test 420 | diverge: step 2787 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-fclass         | fail: test 420 | diverge: step 2787 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-fcmp           | fail: test 420 | diverge: step 2787 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-fcvt           | fail: test 420 | diverge: step 4515 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-fcvt_w         | fail: test 420 | diverge: step 2787 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-fdiv           | fail: test 420 | diverge: step 2787 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-fmadd          | fail: test 420 | diverge: step 2787 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-fmin           | fail: test 420 | diverge: step 2787 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-ldst           | fail: test 420 | diverge: step 2787 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-move           | fail: test 420 | diverge: step 2819 | Zfh is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzfh-v-recoding       | pass           | agree
 rv64uziccid-p-ziccid      | pass           | agree
-rv64uzicond-p-czero_eqz   | fail: test 669 | agree             | Zicond is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
-rv64uzicond-p-czero_nez   | fail: test 669 | agree             | Zicond is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uziccid-v-ziccid      | pass           | agree
+rv64uzicond-p-czero_eqz   | fail: test 669 | agree              | Zicond is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzicond-p-czero_nez   | fail: test 669 | agree              | Zicond is not in the model: illegal instruction, riscv-tests reports 1337|TESTNUM; fails the same way on sail
+rv64uzicond-v-czero_eqz   | fail: test 420 | diverge: step 2787 | Zicond is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420
+rv64uzicond-v-czero_nez   | fail: test 420 | diverge: step 2787 | Zicond is not in the model: the test's illegal instruction in U-mode is not delegated and goes to vm.c's wtf in M-mode, with the sp of U-mode, 0: wtf's first store, to 0xfffffffffffffff8, is outside sail's memory map, so sail faults there and loops, while the harness has no PMA (design-smode.md Q9) and goes on to terminate(841), exit code 420

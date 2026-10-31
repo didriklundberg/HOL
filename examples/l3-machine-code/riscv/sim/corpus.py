@@ -7,11 +7,13 @@ results in tests/corpus.expected.
   corpus.py compare [options]   compare.py outcome of every test
 
 The tests are the ELF files in --corpus whose names match --pattern
-(default rv64*-p-*).  Both modes print a per-suite table (the suite is the
-part of the name before "-p-") and the tests that fail or diverge, with
-their reason, and then every difference from the expected file: a
-regression, an unexpected pass, any other change of outcome, a test with
-no expected outcome, and an expected test missing from the corpus.
+(default rv64*-[pv]-*: the physical-memory environment -p and the
+virtual-memory environment -v of riscv-tests).  Both modes print a
+per-suite table (the suite is the part of the name before "-p-", or before
+"-v-" with "-v" added) and the tests that fail or diverge, with their
+reason, and then every difference from the expected file: a regression,
+an unexpected pass, any other change of outcome, a test with no expected
+outcome, and an expected test missing from the corpus.
 
 Outcomes, as written in the expected file:
 
@@ -53,13 +55,13 @@ DEFAULT_SAIL = os.environ.get(
     "SAIL_RISCV_SIM",
     os.path.join(TOOLS, "sail-riscv", "build", "c_emulator", "sail_riscv_sim"))
 DEFAULT_SAIL_CONFIG = os.path.join(TOOLS, "rv64gc_mu_pmp.json")
-DEFAULT_PATTERN = "rv64*-p-*"
+DEFAULT_PATTERN = "rv64*-[pv]-*"
 
-# Extra compare.py options per suite.  The FP tests read and clear fflags
-# with csrrw after every operation; sail logs a CSR instruction's write
-# only under the name it used, so compare.py's copy of fcsr goes stale
-# (README.md, compare.py).  The registers the values are read into are
-# compared exactly.
+# Extra compare.py options per suite, also for its -v tests.  The FP tests
+# read and clear fflags with csrrw after every operation; sail logs a CSR
+# instruction's write only under the name it used, so compare.py's copy of
+# fcsr goes stale (README.md, compare.py).  The registers the values are
+# read into are compared exactly.
 COMPARE_OPTIONS = {
     "rv64uf": ["--ignore-csr", "fcsr"],
     "rv64ud": ["--ignore-csr", "fcsr"],
@@ -71,7 +73,7 @@ GOOD = {"run": "pass", "compare": "agree"}
 UNKNOWN = "-"
 
 HEADER = """\
-# Expected outcomes of the riscv-tests corpus (rv64*-p-*) on riscv-sim and
+# Expected outcomes of the riscv-tests corpus (rv64*-[pv]-*) on riscv-sim and
 # against sail-riscv; checked by `make corpus` (column riscv-sim) and `make
 # compare-corpus` (column compare), rewritten by `make corpus-update`.
 # Outcomes are those of corpus.py (see its docstring); "-" is not
@@ -83,7 +85,18 @@ HEADER = """\
 
 
 def suite_of(name):
-    return name.split("-p-")[0] if "-p-" in name else name
+    """rv64ui-p-add -> rv64ui, rv64ui-v-add -> rv64ui-v."""
+    if "-p-" in name:
+        return name.split("-p-")[0]
+    if "-v-" in name:
+        return name.split("-v-")[0] + "-v"
+    return name
+
+
+def compare_options(name):
+    """The compare.py options of a test's suite; -v tests share those of -p."""
+    s = suite_of(name)
+    return COMPARE_OPTIONS.get(s[:-2] if s.endswith("-v") else s, [])
 
 
 def is_elf(path):
@@ -146,7 +159,7 @@ def compare_one(opts, name):
         cmd += ["--sail-config-override", c]
     if opts.max_insts_given:
         cmd += ["--max-insts", str(opts.max_insts)]
-    cmd += COMPARE_OPTIONS.get(suite_of(name), [])
+    cmd += compare_options(name)
     cmd.append(elf)
     try:
         p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

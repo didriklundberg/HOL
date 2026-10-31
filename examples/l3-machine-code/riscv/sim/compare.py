@@ -11,6 +11,11 @@ normalised here (normalise_sail).  The traces are compared step by step:
   one, and CSRs (see compare_csrs: CSR effects are compared as state, not
   as write events, because the two models write different CSRs implicitly).
 
+The pc and trap values are virtual addresses, memory accesses physical
+ones, on both sides.  sail's reads of page-table entries are dropped: the
+model reads them without logging them, and how many sail makes depends on
+its TLB, which the model does not have (design-smode.md S4, S6).
+
 Exit status: 0 traces agree, 1 divergence, 2 usage or tool error: an
 emulator that cannot be run, rejects its arguments, configuration or ELF,
 or writes no trace or a trace with no steps.
@@ -68,8 +73,12 @@ CSR_VIEW_MASKS = [("sie", "mideleg"), ("sip", "mideleg")]
 RISCV_SIM_TRACE_HEADER = "# riscv-sim trace v1"
 RISCV_SIM_EXIT_USAGE = 64
 
+# --trace-ptw marks sail's page-table walks, so that their PTE reads can be
+# told from the loads of the program; never --trace-tlb, whose table
+# normalise_sail does not understand.
 SAIL_TRACE_FLAGS = ["--trace-instr", "--trace-reg", "--trace-mem",
-                    "--trace-exception", "--trace-interrupt", "--trace-step"]
+                    "--trace-exception", "--trace-interrupt", "--trace-step",
+                    "--trace-ptw"]
 
 
 class Step:
@@ -84,6 +93,7 @@ class Step:
         self.csr = {}           # name -> int (last write in the step)
         self.memw = []          # (addr, "0x...")
         self.memr = []          # (addr, "0x...")
+        self.pte_reads = 0      # sail's PTE reads, dropped (never compared)
         self.trap = None        # (is_interrupt, cause)
         self.tval = None        # int or None
         self.asm = ""
@@ -186,6 +196,10 @@ S_MEM = re.compile(r"^mem\[([A-Za-z.]+),0x([0-9A-Fa-f]+)\] (<-|->) 0x([0-9A-Fa-f
 S_TRAPPING = re.compile(r"^trapping from \S+ to \S+ to handle (.*)$")
 S_HANDLING = re.compile(r"^handling (\S+) at priv \S+ \| tval=0x([0-9A-Fa-f]+)")
 S_INTERRUPT = re.compile(r"^Handling interrupt: 0x([0-9A-Fa-f]+)$")
+# One level of a page-table walk (--trace-ptw) is "PTW: Start", the read of
+# the PTE as a mem[R,...] line (none if the PMP denies it), and "PTW: Step";
+# the walk ends with "PTW: Success" or "PTW: Failed".
+S_PTW = re.compile(r"^PTW: (Start|Step|Success|Failed), ")
 # informational lines that carry nothing the canonical format records
 S_IGNORE = [re.compile(r) for r in (
     r"^ret-ing from \S+ to \S+$",                       # mret/sret
@@ -199,7 +213,8 @@ def normalise_sail(text, warn=None):
 
     A step is the block of lines up to a blank line.  The trap cause is
     taken from the mcause/scause write that sail logs at trap entry, the
-    trap value from its "handling ... | tval=" line.
+    trap value from its "handling ... | tval=" line.  A memory read between
+    "PTW: Start" and the next PTW line is a PTE read, and is dropped.
     """
     tr = Trace()
     unknown = {}
@@ -220,7 +235,12 @@ def normalise_sail(text, warn=None):
         exception = False
         interrupt = False
         cause = None
+        in_ptw = False
         for line in block:
+            m = S_PTW.match(line)
+            if m:
+                in_ptw = m.group(1) == "Start"
+                continue
             m = S_INSTR.match(line)
             if m:
                 if int(m.group(1)) != idx:
@@ -257,6 +277,8 @@ def normalise_sail(text, warn=None):
                 d = "0x" + data.lower()
                 if arrow == "<-":
                     st.memw.append((int(addr, 16), d))
+                elif in_ptw and kind == "R":
+                    st.pte_reads += 1
                 else:
                     st.memr.append((int(addr, 16), d))
                 continue

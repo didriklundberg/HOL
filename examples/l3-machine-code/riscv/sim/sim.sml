@@ -19,8 +19,9 @@
      writes: fflags from FP instructions, mstatus.FS, trap entry, ...).
      The value printed is CSRMap(n) after the step.
    - Memory writes: the spec's StateDelta (recordStore), whose addr and
-     st_width say where a store, AMO or SC wrote.  The data printed is read
-     back from memory after the step.
+     st_width say where a store, AMO or SC wrote: the physical address,
+     as in sail's trace.  The data printed is read back from memory after
+     the step.
    - Traps: the log entry of takeTrap ("trapping from ... [exc] n").
 *)
 
@@ -503,7 +504,10 @@ val htifPayloadWrites = ref 0
 fun htifReset () = (htifTohost := 0; htifCmdWrite := false; htifPayloadWrites := 0)
 
 (* A store of w bytes at a, whose data is now in memory, overlapping the
-   8 bytes at tohost.  console is where HTIF terminal output goes. *)
+   8 bytes at tohost.  Both are physical addresses: a is the one that
+   recordStore gives, which is translated, and tohost the symbol's, where
+   the ELF is loaded; riscv-tests' -v environment stores to tohost through
+   a virtual address.  console is where HTIF terminal output goes. *)
 fun htifStore (tohost : IntInf.int, a : IntInf.int, w : int,
                console : TextIO.outstream) : htifResult =
   let
@@ -698,7 +702,8 @@ fun stepTraced (opts : options, n : IntInf.int) : stepInfo =
     (* memory *)
     val store = storeOf d
     (* LR.W/LR.D call no recordLoad; a successful LR sets ReserveLoad to
-       its address and leaves memory unchanged, so read the value back. *)
+       its physical address and leaves memory unchanged, so read the value
+       back. *)
     val load =
       if #traceMemReads opts andalso fetched then
         case (decodeRaw raw, riscv.ReserveLoad ()) of
