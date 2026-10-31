@@ -25,5 +25,5 @@ riscv-steplib-selftest.log: ../../common/testscript.ML riscv_stepLib.uo
 # riscv_step_hex on every riscv_dict entry and every sim/tests instruction,
 # with the hypotheses of each theorem checked (see selftest.sml)
 selftest.log: selftest.sml riscv_stepLib.uo $(HOLHEAP)
-	tmp=`mktemp "$${TMPDIR:-.}/stepLibXXXX"` && $(protect $(HOLDIR)/bin/hol) < $< > $$tmp && $(MV) $$tmp $@ || { tail -40 $$tmp; rm -f $$tmp; exit 1; }
+	tmp=`mktemp "$${TMPDIR:-.}/stepLibXXXX"` && $(protect $(HOLDIR)/bin/hol) < $< > $$tmp && $(MV) $$tmp $@ || { grep '^FAIL' $$tmp | head -50; tail -40 $$tmp; rm -f $$tmp; exit 1; }
 endif

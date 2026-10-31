@@ -4,8 +4,10 @@
    riscv_step_hex is run on one encoding of every riscv_dict entry (for the
    floating-point instructions with a rounding-mode field, one with a
    static mode and one with the dynamic one, and for the exact conversions
-   also one with RMM), on every instruction of the programs in ../sim/tests,
-   and on some edge cases.  Each theorem must be
+   also one with RMM; for the CSR instructions, one for each CSR that the
+   step theorems must cover), on a read and two writes of every CSR of the
+   hart and of some addresses that are not CSRs, on every instruction of the
+   programs in ../sim/tests, and on some edge cases.  Each theorem must be
 
      hyps |- NextRISCV s = SOME s'
 
@@ -27,7 +29,8 @@
    bytes), and the conditions under which the instruction is legal: misa.C
    for a compressed instruction, misa.C or a 4-byte aligned target for a
    jump or branch, misa.MXL <> 1w for the RV64-only instructions,
-   mstatus.FS <> 0w for the F and D instructions, and for those with the
+   mstatus.FS <> 0w for the F and D instructions and for the CSR
+   instructions on fflags, frm and fcsr, and for those with the
    dynamic rounding mode fcsr.frm in RNE, RTZ, RDN or RUP (fcsr.frm <+ 5w,
    which adds RMM, for the exact conversions FCVT.D.W, FCVT.D.WU and
    FCVT.D.S).  The address in H5, and the target in the jump condition,
@@ -38,12 +41,24 @@
    target given by x0 and an offset is a constant, which riscv_step decides:
    no hypothesis is left for it.
 
+   No model function may be left in the conclusion (bad_consts: for the
+   CSR instructions, the read and write of the CSR, its legalisation and
+   the access checks; for ECALL, EBREAK and MRET, the trap entry and the
+   return).  For the edge cases, which include ECALL, EBREAK, MRET, WFI and
+   CSR instructions on the CSRs whose values are legalised, fields of the
+   state after the step are checked against their values as
+   doc/design-privileged.md gives them (field checks).
+
    Encodings that cannot step must make riscv_step_hex fail: reserved
-   encodings; ECALL, EBREAK, MRET and SRET, which trap or return from a
-   trap; the CSR instructions, which the step library does not support yet;
-   rm = 5 or 6 (reserved), and rm = 4 (RMM, which L3 does not implement)
-   for an instruction that rounds; and a misaligned constant address.  The
-   test fails if any check fails.
+   encodings, which are illegal; SRET, which returns to S-mode or U-mode;
+   a CSR instruction on an address that is not a CSR, or that writes a
+   read-only CSR, which is illegal (decided here from the CSR table of
+   doc/design-privileged.md, independently of the step library); rm = 5 or
+   6 (reserved), and rm = 4 (RMM, which L3 does not implement) for an
+   instruction that rounds; and a misaligned constant address.  ECALL,
+   EBREAK and MRET step: their theorems take the trap to M-mode
+   (riscv_stepTheory.NextRISCV_trap) or return from it (NextRISCV_mret).
+   The test fails if any check fails.
    ------------------------------------------------------------------------ *)
 
 val () = Feedback.emit_MESG := false;
@@ -233,6 +248,51 @@ fun category inst h =
    What each instruction needs
    ------------------------------------------------------------------------ *)
 
+(* ------------------------------------------------------------------------
+   CSR instructions
+
+   Whether a CSR instruction is legal in M-mode, decided here independently
+   of the step library, from the CSR table of doc/design-privileged.md
+   §3.6.1 (114 addresses) and the rules of §3.2: the CSR must exist, and a
+   write (CSRRW and CSRRWI always, the others when their rs1 or uimm field
+   is not 0) must not be to a read-only CSR (bits 11:10 of the number are
+   3).  fflags, frm and fcsr also need mstatus.FS <> Off, a hypothesis.
+   ------------------------------------------------------------------------ *)
+
+val csr_insts = ["CSRRW", "CSRRS", "CSRRC", "CSRRWI", "CSRRSI", "CSRRCI"]
+
+fun range a b = List.tabulate (b - a + 1, fn i => a + i)
+
+val present_csrs =
+  range 0x001 0x003 @ range 0xC00 0xC02 @ [0x100] @ range 0x104 0x106 @
+  [0x10A] @ range 0x140 0x144 @ [0x180] @ range 0xF11 0xF15 @
+  range 0x300 0x306 @ [0x30A, 0x320] @ range 0x323 0x33F @
+  range 0x340 0x344 @ [0x3A0, 0x3A2] @ range 0x3B0 0x3BF @ [0xB00] @
+  range 0xB02 0xB1F
+
+(* the CSRs that the step theorems must cover (Stage C of WP3) *)
+val required_csrs =
+  [0x300, 0x301, 0x304, 0x305, 0x340, 0x341, 0x342, 0x343, 0x344, 0x306,
+   0x320, 0x3A0, 0x3A2] @ range 0x3B0 0x3BF @
+  [0x001, 0x002, 0x003, 0xC00, 0xC02, 0xB00, 0xB02, 0xF14, 0x106]
+
+fun csr_of h = hex_int h div 1048576
+fun csr_field h = (hex_int h div 32768) mod 32
+
+fun csr_write (inner, h) =
+  Lib.mem inner ["CSRRW", "CSRRWI"] orelse csr_field h <> 0
+
+(* NONE when legal in M-mode, SOME why otherwise *)
+fun csr_illegal inner h =
+  let
+    val c = csr_of h
+  in
+    if not (Lib.mem c present_csrs) then SOME "no such CSR"
+    else if csr_write (inner, h) andalso c div 1024 = 3
+      then SOME "write of a read-only CSR"
+    else NONE
+  end
+
 fun class_of (outer, inner, _) =
   case outer of
      "ArithI" => "ALU"
@@ -253,7 +313,11 @@ fun class_of (outer, inner, _) =
    | "FConv" => "FP arithmetic"
    | "FENCE" => "FENCE"
    | "FENCE_I" => "FENCE"
-   | "System" => "system"
+   | "System" =>
+       if Lib.mem inner ["ECALL", "EBREAK"] then "trap"
+       else if inner = "MRET" then "MRET"
+       else if Lib.mem inner csr_insts then "CSR"
+       else "system"
    | _ => "other"
 
 fun width inner =
@@ -306,7 +370,9 @@ fun expected h (inst as (outer, inner, _)) =
       (if not compressed andalso Option.isSome (jump_target inst)
          then ["target<1>|C"] else []) @
       (if Lib.mem inner rv64_only then ["RV64"] else []) @
-      (if fp then ["FS"] else []) @
+      (if fp orelse
+          Lib.mem inner csr_insts andalso Lib.mem (csr_of h) [1, 2, 3]
+         then ["FS"] else []) @
       (if dyn then
          [if Lib.mem inner exact_conversion then "frm<5" else "frm"]
        else [])
@@ -320,11 +386,9 @@ fun expected h (inst as (outer, inner, _)) =
 (* The instructions the step library cannot step, and why *)
 fun no_step h (inst as (outer, inner, _)) =
   if outer = "UnknownInstruction" then SOME "reserved encoding"
-  else if Lib.mem inner ["ECALL", "EBREAK", "MRET", "SRET"]
-    then SOME "traps or returns from a trap"
-  else if Lib.mem inner ["CSRRW", "CSRRS", "CSRRC", "CSRRWI", "CSRRSI",
-                         "CSRRCI"]
-    then SOME "CSR instructions are not supported yet"
+  else if inner = "SRET"
+    then SOME "SRET returns to S-mode or U-mode, which NextRISCV does not model"
+  else if Lib.mem inner csr_insts then csr_illegal inner h
   else if not (is_compressed h) andalso Lib.mem inner rounding then
     case rm_of h of
        5 => SOME "reserved rounding mode"
@@ -341,7 +405,21 @@ fun no_step h (inst as (outer, inner, _)) =
 val bad_consts =
   [``signalException``, ``signalAddressException``, ``raise'exception``,
    ``dataAddr``, ``fetchAddr``, ``pmpCheck``, ``round``, ``validRounding``,
-   ``accrueFlags``, ``curPrivilege``, ``in32BitMode``, ``haveRVC``]
+   ``accrueFlags``, ``curPrivilege``, ``in32BitMode``, ``haveRVC``,
+   (* traps and MRET *)
+   ``takeTrap``, ``mret``, ``excDest``, ``excCode``, ``trapVector``,
+   ``rawInstBits``, ``privilege``, ``privLevel``, ``setPrivilege``,
+   ``read_xepc``,
+   (* CSRs: the read, the write, the legalisers and the access checks *)
+   ``CSR``, ``write'CSR``, ``CSRMap``, ``write'CSRMap``, ``writeCSR``,
+   ``checkCSROp``, ``is_CSR_defined``, ``check_CSR_access``,
+   ``check_CSR_conditions``, ``counterReadAllowed``, ``fpEnabled``,
+   ``is_mhpm_CSR``, ``read_mip``, ``read_mstatus``, ``read_sstatus``,
+   ``legalize_mstatus``, ``legalize_sstatus``, ``legalize_misa``,
+   ``legalize_xtvec``, ``legalize_xepc``, ``legalize_mcause``,
+   ``legalize_scause``, ``legalize_satp``, ``legalize_pmpcfg``,
+   ``legalize_pmpcfg_byte``, ``write_pmpaddr``, ``pmpcfg_ent``, ``mtime``,
+   ``mtimecmp``, ``msip``, ``MEM``, ``Delta``, ``write'Delta``]
 
 (* s' is s with a sequence of field updates *)
 fun is_update tm =
@@ -437,25 +515,126 @@ fun instantiate rm pat =
     bits_to_hex bits
   end
 
-(* Encodings at the edges of the contract, with whether they must step *)
-val edge_cases = [
-  ("002000e7", "jalr ra,2(zero): constant target, bit 1 set", true),
-  ("004000e7", "jalr ra,4(zero): constant target, 4-byte aligned", true),
-  ("00802503", "lw a0,8(zero): constant aligned address", true),
-  ("00803503", "ld a0,8(zero): constant aligned address", true),
-  ("00602503", "lw a0,6(zero): constant misaligned address", false),
-  ("00101503", "lh a0,1(zero): constant misaligned address", false),
-  ("0000a02f", "amoadd.w zero,zero,(ra)", true),
-  ("1000302f", "lr.d zero,(zero)", true),
-  ("00c5c553", "fadd.s fa0,fa1,fa2,rmm", false),
-  ("00c5d553", "fadd.s fa0,fa1,fa2 with rm = 5", false),
-  ("d205c553", "fcvt.d.w fa0,a1,rmm", true),
-  ("d205e553", "fcvt.d.w fa0,a1 with rm = 6", false),
-  ("30200073", "mret", false),
-  ("00000073", "ecall", false),
-  ("9002", "c.ebreak", false),
-  ("0000", "c.illegal", false)
-]
+(* Encodings at the edges of the contract, with whether they must step,
+   and for some the values of fields of the state after the step, written
+   out from doc/design-privileged.md: each is an equation between a field
+   of s' (the argument) and its value, in terms of s. *)
+local
+  val m = ``^s.c_MCSR ^s.procID``
+  val st = ``(^s.c_MCSR ^s.procID).mstatus``
+  fun gpr n = ``^s.c_gpr ^s.procID ^(wordsSyntax.mk_wordii (n, 5))``
+  fun mcsr s' = ``^s'.c_MCSR ^s'.procID``
+  fun same_regs s' = ``^s'.c_gpr = ^s.c_gpr``
+  fun same_mcsr s' = ``^s'.c_MCSR = ^s.c_MCSR``
+  fun next_pc n s' =
+    ``^s'.c_PC ^s'.procID = ^s.c_PC ^s.procID + ^(wordsSyntax.mk_wordii (n, 64))``
+  (* the trap of an ECALL or EBREAK from M-mode, with cause ec and trap value
+     tval (design-privileged.md §4.6, into M) *)
+  fun trap ec tval =
+    [fn s' => ``^s'.c_privilege ^s'.procID = 3w``,
+     fn s' => ``^s'.c_PC ^s'.procID = ^m.mtvec && ~3w``,
+     fn s' => ``(^(mcsr s')).mcause = <| EC := ^(wordsSyntax.mk_wordii (ec, 63));
+                                         Int := F |>``,
+     fn s' => ``(^(mcsr s')).mepc = ^s.c_PC ^s.procID``,
+     fn s' => ``(^(mcsr s')).mtval = ^tval``,
+     fn s' => ``(^(mcsr s')).mstatus =
+                ^st with <| MIE := F; MPIE := ^st.MIE; MPP := 3w |>``,
+     fn s' => ``(^(mcsr s')).mtvec = ^m.mtvec``,
+     same_regs]
+in
+  val edge_cases = [
+  ("002000e7", "jalr ra,2(zero): constant target, bit 1 set", true, []),
+  ("004000e7", "jalr ra,4(zero): constant target, 4-byte aligned", true, []),
+  ("00802503", "lw a0,8(zero): constant aligned address", true, []),
+  ("00803503", "ld a0,8(zero): constant aligned address", true, []),
+  ("00602503", "lw a0,6(zero): constant misaligned address", false, []),
+  ("00101503", "lh a0,1(zero): constant misaligned address", false, []),
+  ("0000a02f", "amoadd.w zero,zero,(ra)", true, []),
+  ("1000302f", "lr.d zero,(zero)", true, []),
+  ("00c5c553", "fadd.s fa0,fa1,fa2,rmm", false, []),
+  ("00c5d553", "fadd.s fa0,fa1,fa2 with rm = 5", false, []),
+  ("d205c553", "fcvt.d.w fa0,a1,rmm", true, []),
+  ("d205e553", "fcvt.d.w fa0,a1 with rm = 6", false, []),
+  ("0000", "c.illegal", false, []),
+  (* traps, MRET, SRET and WFI *)
+  ("00000073", "ecall: trap to M-mode with cause 11", true, trap 11 ``0w: word64``),
+  ("00100073", "ebreak: trap to M-mode with cause 3, mtval = pc", true,
+   trap 3 ``^s.c_PC ^s.procID``),
+  ("9002", "c.ebreak: as ebreak", true, trap 3 ``^s.c_PC ^s.procID``),
+  ("30200073", "mret", true,
+   [fn s' => ``^s'.c_privilege ^s'.procID =
+                if ^st.MPP = 2w then 0w else ^st.MPP``,
+    fn s' => ``^s'.c_PC ^s'.procID =
+                if ^m.misa.C then ^m.mepc else ^m.mepc && ~3w``,
+    fn s' => ``(^(mcsr s')).mstatus =
+                ^st with <| MIE := ^st.MPIE; MPIE := T; MPP := 0w;
+                            MPRV := (^st.MPRV /\ (^st.MPP = 3w)) |>``,
+    fn s' => ``(^(mcsr s')).mepc = ^m.mepc``,
+    same_regs]),
+  ("10200073", "sret", false, []),
+  ("10500073", "wfi: a no-op in M-mode", true,
+   [next_pc 4, same_mcsr, same_regs,
+    fn s' => ``^s'.c_privilege = ^s.c_privilege``]),
+  (* CSR instructions *)
+  ("30529073", "csrw mtvec,t0: legalised mtvec", true,
+   [fn s' => ``(^(mcsr s')).mtvec =
+                if word_bit 1 ^(gpr 5) then
+                  ((63 >< 2) ^(gpr 5) : 62 word) @@ ((1 >< 0) ^m.mtvec : word2)
+                else ^(gpr 5)``,
+    next_pc 4, same_regs]),
+  ("300020f3", "csrrs ra,mstatus,zero: the mstatus read, SD from FS", true,
+   [fn s' => ``^s'.c_gpr ^s'.procID 1w =
+                reg'mstatus ^st && 0x7A79AAw || 0xA00000000w ||
+                (if ^st.FS = 3w then 0x8000000000000000w else 0w)``,
+    same_mcsr, next_pc 4]),
+  ("3a0fd073", "csrwi pmpcfg0,0x1f: entry 0 NAPOT RWX", true,
+   [fn s' => ``(^(mcsr s')).pmpcfg0 = 0x1Fw``, same_regs]),
+  ("3a015073", "csrwi pmpcfg0,2: W without R, so W cleared", true,
+   [fn s' => ``(^(mcsr s')).pmpcfg0 = 0w``]),
+  ("3a075073", "csrwi pmpcfg0,14: W and X without R, so both cleared", true,
+   [fn s' => ``(^(mcsr s')).pmpcfg0 = 8w``]),
+  ("3b329073", "csrw pmpaddr3,t0: bits 63:54 read-only zero", true,
+   [fn s' => ``(^(mcsr s')).pmpaddr3 = ^(gpr 5) && 0x3FFFFFFFFFFFFFw``]),
+  ("34129073", "csrw mepc,t0: bit 0 cleared", true,
+   [fn s' => ``(^(mcsr s')).mepc = ^(gpr 5) && ~1w``]),
+  ("34102573", "csrr a0,mepc: bit 1 masked without C", true,
+   [fn s' => ``^s'.c_gpr ^s'.procID 10w =
+                if ^m.misa.C then ^m.mepc else ^m.mepc && ~3w``,
+    same_mcsr]),
+  ("30429073", "csrw mie,t0: the six interrupts", true,
+   [fn s' => ``reg'mie (^(mcsr s')).mie = ^(gpr 5) && 0xAAAw``]),
+  ("3067d073", "csrwi mcounteren,15: CY, TM, IR", true,
+   [fn s' => ``(^(mcsr s')).mcounteren = 7w``]),
+  ("32005073", "csrwi mcountinhibit,0", true,
+   [fn s' => ``(^(mcsr s')).mcountinhibit = 0w``]),
+  ("340110f3", "csrrw ra,mscratch,sp: swap", true,
+   [fn s' => ``^s'.c_gpr ^s'.procID 1w = ^m.mscratch``,
+    fn s' => ``(^(mcsr s')).mscratch = ^(gpr 2)``]),
+  ("f1402673", "csrr a2,mhartid", true,
+   [fn s' => ``^s'.c_gpr ^s'.procID 12w = ^m.mhartid``, same_mcsr]),
+  ("c0002573", "rdcycle a0", true,
+   [fn s' => ``^s'.c_gpr ^s'.procID 10w = ^s.c_cycles ^s.procID``,
+    same_mcsr]),
+  ("b0229073", "csrw minstret,t0: no increment for this instruction", true,
+   [fn s' => ``^s'.c_instret ^s'.procID = ^(gpr 5)``,
+    fn s' => ``^s'.c_minstret_written ^s'.procID``]),
+  ("0010d073", "csrwi fflags,1: NX, and FS Dirty", true,
+   [fn s' => ``reg'FPCSR (^s'.c_UCSR ^s'.procID).fpcsr =
+                reg'FPCSR (^s.c_UCSR ^s.procID).fpcsr && 0xFFFFFFE0w || 1w``,
+    fn s' => ``(^(mcsr s')).mstatus.FS = 3w``]),
+  ("30029073", "csrw mstatus,t0: MIE, and MPP 2 written as 0", true,
+   [fn s' => ``(^(mcsr s')).mstatus.MIE = word_bit 3 ^(gpr 5)``,
+    fn s' => ``(^(mcsr s')).mstatus.MPP =
+                if (12 >< 11) ^(gpr 5) = 2w: word2 then 0w
+                else (12 >< 11) ^(gpr 5)``]),
+  ("c0001073", "unimp (csrrw zero,cycle,zero): write of a read-only CSR",
+   false, []),
+  ("7c002573", "csrrs a0,0x7c0,zero: no such CSR", false, []),
+  ("3a1020f3", "csrrs ra,pmpcfg1,zero: odd pmpcfg, absent on RV64", false,
+   []),
+  ("c8002573", "csrrs a0,cycleh,zero: RV32 only", false, [])
+  ]
+end
 
 (* Every distinct instruction encoding of the programs in ../sim/tests, in
    order of first occurrence: the ELFs built by ../sim/Makefile, through
@@ -1480,9 +1659,31 @@ fun must_not_step name h why =
     ( no_steps := !no_steps + 1
     ; print ("no step (" ^ why ^ "): " ^ name ^ " " ^ h ^ "\n") )
 
-(* Checks the theorem of an encoding that must step; returns false when
-   riscv_step finds that it traps on a misaligned constant address *)
-fun must_step name h inst =
+(* A field check holds if it simplifies to T, or is then proved by
+   bit-blasting (the fields of s as atoms), after a case split on the
+   conditions in it.  rec'mstatus is expanded for the checks of the fields
+   of a written mstatus. *)
+local
+  val ss = srw_ss() ++ bitstringLib.v2w_n2w_ss
+  val rwts =
+    [riscvTheory.Skip_def, riscv_stepTheory.reg_rec_id,
+     riscvTheory.rec'mstatus_def]
+  fun blast tm = TAC_PROOF (([], tm), rw [] \\ blastLib.FULL_BBLAST_TAC)
+in
+  fun field_holds tm =
+    let
+      val r = utilsLib.rhsc (Conv.QCONV (SIMP_CONV ss rwts) tm)
+    in
+      Teq r orelse Lib.can blast r
+    end
+    handle HOL_ERR _ => false
+end
+
+(* Checks the theorem of an encoding that must step, and the fields of the
+   state after it (checks); returns false when riscv_step finds that the
+   instruction traps (on a misaligned constant address, or a CSR access
+   that is illegal), and then has no step theorem *)
+fun must_step_with checks name h inst =
   let
     val th = SOME (riscv_step_hex h)
              handle e as HOL_ERR herr =>
@@ -1497,9 +1698,21 @@ fun must_step name h inst =
          let
            val (cats, errors) = check h inst th
            val key = if is_compressed h then "compressed" else class_of inst
+           val s' =
+             optionSyntax.dest_some (boolSyntax.rhs (Thm.concl th))
+             handle HOL_ERR _ => s
+           val field_errors =
+             List.mapPartial
+               (fn f =>
+                  let
+                    val tm = f s'
+                  in
+                    if field_holds tm then NONE
+                    else SOME ("field check fails: " ^ Parse.term_to_string tm)
+                  end) checks
          in
            List.app (fn e => fail (name ^ " " ^ h ^ " (" ^ name_of inst ^
-                                   "): " ^ e)) errors
+                                   "): " ^ e)) (errors @ field_errors)
            ; incr key
            ; shapes := (key, cats) :: !shapes
            ; if Lib.can (Lib.assoc key) (!examples) then ()
@@ -1508,6 +1721,8 @@ fun must_step name h inst =
          end
   end
   handle e => (fail (name ^ " " ^ h ^ ": " ^ General.exnMessage e); true)
+
+val must_step = must_step_with []
 
 fun test name h =
   let
@@ -1550,10 +1765,61 @@ val () =
              in
                if not (named h) orelse test name h then () else go rm (k - 1)
              end
+         (* a CSR entry: each of the required CSRs, with the other free
+            bits chosen as for the other entries *)
+         fun with_csr c =
+           let
+             val h = instantiate NONE pat
+             val n = hex_int h mod 1048576 + c * 1048576
+           in
+             StringCvt.padLeft #"0" 8
+               (String.map Char.toLower (Int.fmt StringCvt.HEX n))
+           end
+         (* for the CSR entries, an instruction that must step and does
+            not is a failure (test returns false for it) *)
+         fun csr_test c =
+           let
+             val h = with_csr c
+           in
+             if not (named h) orelse test name h then ()
+             else fail (name ^ " " ^ h ^ ": no step")
+           end
        in
-         List.app (fn rm => go rm 8) rms
+         if Lib.mem base csr_insts then List.app csr_test required_csrs
+         else List.app (fn rm => go rm 8) rms
        end)
     riscv_dict
+
+(* every CSR of the hart, read with CSRRS (csrr a0) and written with CSRRW
+   from t0 and CSRRCI with uimm 3 (each also tests that a write of a
+   read-only CSR does not step), and some addresses that are not CSRs *)
+local
+  fun enc c f3 rd f =
+    StringCvt.padLeft #"0" 8
+      (String.map Char.toLower
+         (Int.fmt StringCvt.HEX
+            (c * 1048576 + f * 32768 + f3 * 4096 + rd * 128 + 0x73)))
+  val absent =
+    [0x000, 0x004, 0x008, 0x015, 0xC03, 0xC1F, 0xC80, 0x101, 0x120, 0x14D,
+     0x15D, 0x181, 0x200, 0x310, 0x312, 0x321, 0x322, 0x34A, 0x3A1, 0x3A3,
+     0x3A4, 0x3C0, 0x747, 0x7A0, 0x7B0, 0x7C0, 0xB01, 0xB80, 0xF00, 0xF10,
+     0xFFF]
+in
+  val () =
+    List.app
+      (fn c =>
+         List.app
+           (fn (txt, f3, rd, f) =>
+              let
+                val name = "CSR 0x" ^ Int.fmt StringCvt.HEX c ^ " " ^ txt
+                val h = enc c f3 rd f
+              in
+                if test name h then () else fail (name ^ " " ^ h ^ ": no step")
+              end)
+           [("csrrs a0,csr,zero", 2, 10, 0), ("csrrw zero,csr,t0", 1, 0, 5),
+            ("csrrci t1,csr,3", 7, 6, 3)])
+      (present_csrs @ absent)
+end
 
 (* the rm values that make an instruction with a rounding mode illegal *)
 val () =
@@ -1568,13 +1834,13 @@ val () =
 
 val () =
   List.app
-    (fn (h, txt, steps) =>
+    (fn (h, txt, steps, checks) =>
        let
          val inst = decoded h
          val name = "edge: " ^ txt
        in
          if steps then
-           (if must_step name h inst then ()
+           (if must_step_with checks name h inst then ()
             else fail (name ^ " " ^ h ^ ": no step"))
          else must_not_step name h "edge case"
        end
@@ -1595,7 +1861,8 @@ val () =
   let
     val classes =
       ["ALU", "branch", "JAL/JALR", "load", "store", "AMO", "LR/SC",
-       "FP load/store", "FP arithmetic", "compressed", "FENCE", "system"]
+       "FP load/store", "FP arithmetic", "compressed", "FENCE", "system",
+       "trap", "MRET", "CSR"]
   in
     print ("\nriscv_dict entries: " ^ Int.toString ndict ^
            ", sim/tests instructions: " ^ Int.toString (List.length sim_tests) ^
