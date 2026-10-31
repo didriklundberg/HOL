@@ -135,7 +135,7 @@ Classes: **U** unaffected; **R** mechanical rename (map in §1.6); **N** needs n
 | 590 | `bare = ... mstatus.VM = 0w` | R | delete; contract §1.5 replaces it |
 | 591, 593, 869-948 | `mcpuid.ArchBase`, `^archbase = 0w`, `<> 0w` | R + value | `misa.MXL`; RV32 test becomes `1w` |
 | 605 | `datatype_rewrites ... "VM_Mode"` | R | delete `VM_Mode` |
-| 648-651 | `EV [translateAddr_def, MCSR_def, vmType_def, ...] [[bare]]` | R | `EV [translateAddr_def] [] []` |
+| 648-651 | `EV [translateAddr_def, MCSR_def, vmType_def, ...] [[bare]]` | R | `EV [translateAddr_def] [] []` (*WP7 amendment:* deleted in WP7 stage 3; the step theorems use the lemma `translateAddr_Machine` instead, `design-smode.md` §1.4) |
 | 653-655 | `EV [in32BitMode_def, curArch_def, MCSR_def, architecture_def, not1]` | R | `[in32BitMode_def, MCSR_def]` |
 | 689-726 | `Fetch`, `Fetch32`, `Fetch16` with hypothesis `mstatus.VM = 0w` | **N** | PMP lemma and contract §1.5 |
 | 826-849 | load/store/AMO rewrite list, `signalAddressException` avoidance | **N** | `pmpCheck` and misaligned trap; avoid lists need alignment hypotheses for `LW LH LWU LHU SW SH` (LD/SD already carry `aligned_d`) |
@@ -1104,6 +1104,7 @@ See §4.3: misaligned (4/6) above access fault (5/7), without a PMP check. In sa
 4. Else if `¬pmpCheck(PC+2, 2, Execute, curPrivilege())`: raise 1, **`tval = PC+2`**, `mepc = PC`.
 5. Read the second parcel.
 This is the existing `Fetch()` structure (`FETCH_FAULT(vPC)`, `FETCH_FAULT(vPC + 2)`), and must be mirrored in `riscv_step$Fetch_def` (F1). sail with Ziccif does one 4-byte check at a 4-aligned PC (`postlude/fetch.sail:83-112`); since every bound is a multiple of 4, verdict and `mtval` are identical. A 16-bit instruction in the last 2 bytes of an executable region never faults.
+*WP7 amendment (`design-smode.md` §3.8, [S16]):* each parcel is first translated with `curPrivilege()`, which may raise 12, or 1 if the PMP denies the read of a PTE, with the same `tval`; the PMP check of steps 2 and 4 is then of the physical address. `fetchAddr` gives the address or the code, `FETCH_FAULT(e, addr)` carries the code, and `riscv_step$Fetch_def` mirrors this with the patterns `TR_Address`/`TR_Fault` (WP7 stage 3).
 
 #### 5.6.4 Misaligned behaviour by instruction class (U §2.1.6 p.37; §5.2 p.116; §5.6 p.120–121; P §3.6.4 p.67)
 

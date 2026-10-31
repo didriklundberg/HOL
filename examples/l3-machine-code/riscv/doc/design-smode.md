@@ -122,6 +122,18 @@ Consequences:
 `translateAddr_Bare` is the lemma that a future U-mode or S-mode step theorem would use (§1.9). WP7
 proves it to show that the Bare case is cheap. It does **not** add H7 to `contract_hyps`.
 
+*Stage 3 notes.* The five statements are as above. Three proofs differ from the last column:
+
+- `fetchAddr_Machine` and `dataAddr_Machine` first prove `pmpCheck (a, n, kind, Machine) s` with
+  `pmpCheck_Machine` (and, for `dataAddr`, `effectivePrivilege () s = Machine` with
+  `effectivePrivilege_Machine`), and then simplify. `rw` as written splits the conditional
+  `if pmpCheck … then TR_Address a else TR_Fault …` into cases and leaves a goal that
+  `pmpCheck_Machine` does not match. The old proof had no such split, because the simplifier turns
+  `(if b then SOME x else NONE) = SOME y` into `b ∧ x = y`, and `TransResult` has no such rewrite.
+- `effectivePrivilege_Machine` also needs `MCSR_def`, since `effectivePrivilege` reads
+  `(MCSR state).mstatus.MPRV`.
+- `translateAddr_Bare` is `rw [translateAddr_def, SCSR_def]`; `rw` splits on `p = Machine` itself.
+
 ### 1.4 Step-library changes
 
 | Location | Today | WP7 |
@@ -140,6 +152,25 @@ proves it to show that the Bare case is cheap. It does **not** add H7 to `contra
 | `riscv_stepLib.sml:661-675` `csr_defs` | includes `legalize_satp_def` | unchanged as a list; the `csrw satp` theorem picks up the new legaliser (§3.2.3). `check_CSR_conditions` for 0x180 is `T` under H1 |
 | `riscv_stepLib.sml:766-783` trap/`excDest` | H1 decides "not delegated" | unchanged |
 
+*Stage 3 notes.*
+
+1. Besides the five names added to `bad`, the step script's `check` also rejects an instruction
+   theorem that has a hypothesis mentioning `c_SCSR`, by its selector or its update. So the
+   hypothesis check of §1.8 also holds at build time, for every theorem stored in
+   `riscv_stepTheory`.
+2. Comments are reworded where WP7 made them wrong:
+   - `Fetch_def`: a parcel can also fail in translation.
+   - `NextRISCV_def`: SRET gives `NONE` because S-mode and U-mode code are outside the step theorems
+     by design, no longer because S-mode is unvalidated.
+   - The H1-H6 block.
+   - The comments "translateAddr is the identity" (`:374`) and "satp.MODE is Bare" (`:1235`) are
+     gone with the lemma and the EV they described.
+3. Printed under `trindemossen-2`, every theorem of `riscv_stepTheory` is textually identical to
+   stage 1's, except `Fetch_def` (the patterns), `fetchAddr_Machine` and `dataAddr_Machine`
+   (`TR_Address a`), and the three new lemmas. So the new `SUM` field of `mstatus` changes no proof
+   and no theorem, as the row for `mret_eval` and the others expected. `contract_hyps` and the rest
+   of `riscv_stepLib.sml` are unchanged.
+
 ### 1.5 `prog` (`prog/riscv_progScript.sml`, `riscv_progLib.sml`)
 
 - **`c_SCSR` stays hidden** (hide list `riscv_progScript.sml:22-26`), and `riscv_ID` (`:79-85`) is
@@ -150,6 +181,16 @@ proves it to show that the Bare case is cheap. It does **not** add H7 to `contra
   `prog`.
 - Any new top-level `declare` added in WP7 must go into the hide list (F3). The design adds none,
   because there is no TLB and no PTE log.
+
+*Stage 3 note.* The hide list and `riscv_ID` are unchanged. One change was needed in
+`riscv_progLib.sml`, unrelated to translation. It did not build under `trindemossen-2`, which §7
+requires: `riscv_spec` recognised the step library's error for a CSR instruction with
+`Feedback.message_of`, which only HOL develop has (since commit `8f8ab4f20`, WP4). It now looks for
+the message in `Feedback.exn_to_string` of the exception, which both versions have. Under both,
+`riscv_spec_hex` gives every CSR instruction tried, `csrw satp,t0`, `csrwi satp,0` and
+`csrw sstatus,t0` among them, the error "CSR instructions, ECALL, EBREAK and MRET are not
+supported". For the other instructions tried (loads, stores, an AMO, ADDI, WFI and SFENCE.VMA) the
+two versions give the same specs.
 
 ### 1.6 HolBA (`~/Documents/HolBA-priv113`, branch `riscv_priv113`)
 
@@ -207,6 +248,38 @@ knock-on effect is the `mstatus` record gaining `SUM`, which the `UPDATE_APPLY` 
   - `"10200073"` `sret` must still fail.
 - New check: `find_term (same_const ``riscv_state_c_SCSR``)` over the hypotheses of every theorem
   must find nothing. Conclusions may mention `c_SCSR` only for S-mode CSR writes.
+
+*Stage 3 notes.*
+
+1. **The constant.** In HOL develop the selector of `c_SCSR` is the constant
+   `recordtype.riscv_state.seldef.c_SCSR`, which only prints as `riscv_state_c_SCSR`. So the
+   test takes the constants from the terms ``s.c_SCSR`` and ``s with c_SCSR := f``. That way it
+   also catches an update of `c_SCSR`, and it works under both HOL versions.
+2. **Reads too.** The conclusion rule has to allow S-mode CSR reads as well as writes: a read
+   such as `csrr a0,satp` puts the stored value, a field of `c_SCSR`, into `rd`. The test allows
+   `c_SCSR` in a conclusion only for a CSR instruction on one of the eight CSRs stored there:
+   `stvec`, `scounteren`, `senvcfg`, `sscratch`, `sepc`, `scause`, `stval` and `satp`.
+   `sstatus`, `sie` and `sip` are views of `c_MCSR`.
+3. **Edge cases beyond the list.**
+   - `csrr a0,satp`: the value stored.
+   - `csrr a0,sstatus`: the read through `SSTATUS_MASK`, which shows SUM.
+   - A SUM check in `csrw mstatus,t0`.
+   - `csrw sstatus,t0` checks all thirteen fields: SIE, SPIE, SPP, FS, SUM and MXR are taken from
+     `t0`; MIE, MPIE, MPRV, TVM, TW and TSR keep their bits of the stored word; MPP keeps its
+     bits, with 2 stored as 0.
+   - `sfence.vma` also checks that `c_SCSR` and the privilege are unchanged.
+4. **More programs.** The selftest's list of `sim/tests` encodings now also has those of
+   `smode.S`, `sv39.S`, `sv48.S` and `sv57.S`: 971 more, 1952 in all. They are regenerated by the
+   procedure that its comment gives, and that procedure also reproduces the old list exactly. So
+   the header's claim that the list holds every instruction of those programs is true again.
+5. **Result.** Under develop and under `trindemossen-2`:
+   - every check passes, with no `UNEXPECTED` hypothesis;
+   - SRET has no theorem;
+   - 58 theorems have `c_SCSR` in the conclusion, and none in a hypothesis;
+   - each class of instruction has the same set of hypothesis shapes as in stage 1, so the new
+     theorems only add to the counts;
+   - the selftest takes 422 s under develop and 456 s under `trindemossen-2`, against 315 s in
+     stage 1.
 
 ### 1.9 Outside WP7: what S/U-mode lifting would need
 
@@ -1486,6 +1559,23 @@ the stage names, and each changed row gets a note.
     still yields no theorem;
   - `contract_hyps` is unchanged;
   - the stage 2 gate still passes (no spec change in stage 3).
+
+*Stage 3 notes.* The notes in §1.3, §1.4, §1.5 and §1.8 give the details.
+
+- **`trindemossen-2`.** It was checked as in stages 1 and 2, in a scratch copy of `model/`,
+  `step/`, `prog/` and `decompiler/`. That copy's Holmakefiles use `trindemossen-2`'s own
+  `examples/l3-machine-code/common` and `lib`, in the way HolBA builds the vendored files,
+  because this tree's `common/Import.sml` needs develop. `prog/` needed the one change of §1.5.
+- **No prog selftest.** `prog/` has none. The decompiler's test is `riscv_decomp_demoScript.sml`,
+  and it builds all 16 of its theorems under both versions. Its `test5` to `test7` take loads,
+  stores and an AMO through `riscv_spec`.
+- **Gate.** The stage 2 gate gives the same results as in stage 2:
+  - `make test` passes;
+  - `make compare` passes;
+  - `make corpus` and `make compare-corpus` both give "all 372 outcomes as in
+    `tests/corpus.expected`".
+- **Not built.** `examples/machine-code/graph`, which also uses `riscv_progLib`, is in no HOL
+  build sequence, and was not built.
 
 ### Stage 4: HolBA `satp` lifting
 
