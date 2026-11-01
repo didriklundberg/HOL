@@ -1489,3 +1489,216 @@ in
   val clint_instruction_thms =
     map (fn nm => (nm, mk (nm, comm_thm nm))) clint_instructions
 end
+
+(* ------------------------------------------------------------------------
+   7. Instruction fetch
+
+   Fetch reads the 2-byte parcel at the pc after fetchAddr has translated
+   it and the PMP has allowed its execution, and, when the low bits of the
+   parcel mark a 32-bit instruction, the parcel at pc + 2 in the same way
+   (design-privileged.md §5.6.3 "Instruction fetch", [D59];
+   design-smode.md §3.11).  rawReadInst reads 4 bytes from the first
+   parcel, but Fetch keeps only its low half (it takes the upper half from
+   the second parcel), so the result depends on those 4 bytes and on
+   nothing else in memory.  Fetch writes no memory.
+   ------------------------------------------------------------------------ *)
+
+(* fetchAddr does not read Skip, which rawReadInst sets before the second
+   parcel is translated. *)
+local
+  val fns = ["MCSR", "SCSR", "curPrivilege", "pmpcfg_ent", "pmpaddr",
+             "pmpRegion", "pmpEntryCheck", "pmpCheck", "ptePermits", "MEM",
+             "ptwLevel", "ptwStep", "translateAddr", "fetchAddr"]
+  val lemmas = ref ([] : thm list)
+  fun goal nm =
+    let
+      val def = DB.fetch "riscv" (nm ^ "_def")
+      val (c, dargs) = strip_comb (lhs (snd (strip_forall (concl def))))
+      val s = ``s : riscv_state``
+      fun app st =
+        if length (fst (strip_fun (type_of c))) = 1 then mk_comb (c, st)
+        else mk_comb (mk_comb (c, hd dargs), st)
+      val g = mk_eq (app ``^s with c_Skip := v``, app s)
+    in
+      (def, list_mk_forall (free_vars g, g))
+    end
+  fun prove_one nm =
+    let
+      val (def, g) = goal nm
+      val th = Q.prove (`^g`,
+                 rpt gen_tac
+                 \\ simp ([def] @ !lemmas)
+                 \\ rpt (CASE_TAC \\ simp (!lemmas)))
+    in
+      lemmas := th :: !lemmas; th
+    end
+in
+  val skip_lemmas = map prove_one fns
+end
+
+Theorem fetchAddr_Skip:
+  !a s v. fetchAddr a (s with c_Skip := v) = fetchAddr a s
+Proof
+  simp (skip_lemmas)
+QED
+
+Theorem fetchAddr_Skip_MEM8[local]:
+  !a s v m.
+    fetchAddr a ((s with c_Skip := v) with MEM8 := m) =
+    fetchAddr a (s with MEM8 := m)
+Proof
+  rpt gen_tac
+  \\ `(s with c_Skip := v) with MEM8 := m = (s with MEM8 := m) with c_Skip := v`
+     by simp [riscv_state_component_equality]
+  \\ pop_assum SUBST1_TAC
+  \\ simp [fetchAddr_Skip]
+QED
+
+(* Fetch records the instruction in the tandem-verification Delta by a
+   chain of nine write'Delta; these collapse it. *)
+Theorem Delta_write'Delta:
+  !x s. Delta (write'Delta x s) = x
+Proof
+  simp [Delta_def, write'Delta_def]
+QED
+
+Theorem write'Delta_write'Delta:
+  !x y s. write'Delta x (write'Delta y s) = write'Delta x s
+Proof
+  simp [write'Delta_def, combinTheory.UPDATE_EQ]
+QED
+
+Theorem extract_15_0[local]:
+  !(a : word8) (b : word8) (c : word8) (d : word8).
+    (15 >< 0) ((a @@ b @@ c @@ d) : word32) = ((c @@ d) : word16)
+Proof
+  blastLib.BBLAST_TAC
+QED
+
+(* The bytes that Fetch reads: those of the parcel at the pc and of the
+   parcel at pc + 2, each when fetchAddr has given its physical address,
+   for an even pc (Fetch raises the misaligned exception otherwise). *)
+Definition fetch_bytes_def:
+  fetch_bytes s x <=>
+    ~word_bit 0 (PC s) /\
+    ((?pa. (fetchAddr (PC s) s = TR_Address pa) /\ in_range pa 2 x) \/
+     (?pa. (fetchAddr (PC s + 2w) s = TR_Address pa) /\ in_range pa 2 x))
+End
+
+val write'Skip_MEM8 = gen_thm "write'Skip_MEM8"
+
+val fetch_ss =
+  [Delta_write'Delta, write'Delta_write'Delta, write'Delta_MEM8, Delta_MEM8,
+   PC_MEM8, LET_THM, UNCURRY_FST_SND, TypeBase.case_def_of ``:rawInstType``,
+   TypeBase.case_def_of ``:TransResult``]
+
+Theorem Fetch_MEM8:
+  !s m.
+    (!x. fetch_bytes s x ==> (m x = s.MEM8 x)) /\
+    (fetchAddr (PC s) (s with MEM8 := m) = fetchAddr (PC s) s) /\
+    (fetchAddr (PC s + 2w) (s with MEM8 := m) = fetchAddr (PC s + 2w) s) ==>
+    (Fetch () (s with MEM8 := m) =
+     (FST (Fetch () s), SND (Fetch () s) with MEM8 := m))
+Proof
+  rpt strip_tac
+  \\ simp_tac std_ss [Fetch_def, LET_THM, PC_MEM8, haveRVC_MEM8]
+  \\ IF_CASES_TAC
+  >- simp_tac std_ss []
+  \\ asm_rewrite_tac []
+  \\ CASE_TAC
+  \\ TRY (simp_tac std_ss [] \\ NO_TAC)
+  \\ `!x. in_range c 2 x ==> (m x = s.MEM8 x)`
+     by (rpt strip_tac
+         \\ qpat_assum `!x. fetch_bytes _ _ ==> _` irule
+         \\ simp_tac std_ss [fetch_bytes_def]
+         \\ conj_tac
+         >- (qpat_x_assum `~(_ \/ _)` mp_tac \\ simp_tac std_ss [])
+         \\ disj1_tac
+         \\ qexists_tac `c`
+         \\ asm_simp_tac std_ss [])
+  \\ `(m c = s.MEM8 c) /\ (m (c + 1w) = s.MEM8 (c + 1w))`
+     by (conj_tac
+         \\ qpat_assum `!x. in_range c 2 x ==> _` irule
+         \\ simp_tac num_ss side_ss)
+  \\ asm_simp_tac std_ss [rawReadInst_eq, MEM8_of_upd]
+  \\ IF_CASES_TAC
+  >- (asm_simp_tac (srw_ss())
+        ([write'Skip_def, fetchAddr_Skip, fetchAddr_Skip_MEM8] @ fetch_ss)
+      \\ CASE_TAC
+      >- (`!x. in_range c' 2 x ==> (m x = s.MEM8 x)`
+            by (rpt strip_tac
+                \\ qpat_assum `!x. fetch_bytes _ _ ==> _` irule
+                \\ simp_tac std_ss [fetch_bytes_def]
+                \\ conj_tac
+                >- (qpat_x_assum `~(_ \/ _)` mp_tac \\ simp_tac std_ss [])
+                \\ disj2_tac
+                \\ qexists_tac `c'`
+                \\ asm_simp_tac std_ss [])
+          \\ `(m c' = s.MEM8 c') /\ (m (c' + 1w) = s.MEM8 (c' + 1w))`
+            by (conj_tac
+                \\ qpat_assum `!x. in_range c' 2 x ==> _` irule
+                \\ simp_tac num_ss side_ss)
+          \\ asm_simp_tac std_ss ([extract_15_0] @ fetch_ss))
+      \\ asm_simp_tac std_ss ([write'Skip_MEM8] @ fetch_ss))
+  \\ asm_simp_tac std_ss ([write'Skip_MEM8] @ fetch_ss)
+QED
+
+Theorem Fetch_MEM8_frame:
+  !s. (SND (Fetch () s)).MEM8 = s.MEM8
+Proof
+  gen_tac
+  \\ qspecl_then [`s`, `s.MEM8`] mp_tac Fetch_MEM8
+  \\ simp_tac std_ss [MEM8_fupd_id]
+  \\ disch_then (mp_tac o AP_TERM ``\p : FetchResult # riscv_state. (SND p).MEM8``)
+  \\ simp_tac std_ss [MEM8_of_upd]
+QED
+
+(* Two states equal except on D fetch the same instruction and stay equal
+   except on D, if D has none of the bytes fetched and fetchAddr agrees on
+   both parcels (it does with translation off: fetchAddr_off_MEM8). *)
+Theorem Fetch_reads:
+  !D s1 s2.
+    same_except D s1 s2 /\ (!x. fetch_bytes s1 x ==> ~D x) /\
+    (fetchAddr (PC s1) s2 = fetchAddr (PC s1) s1) /\
+    (fetchAddr (PC s1 + 2w) s2 = fetchAddr (PC s1 + 2w) s1) ==>
+    (FST (Fetch () s1) = FST (Fetch () s2)) /\
+    same_except D (SND (Fetch () s1)) (SND (Fetch () s2))
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ `(s2 = s1 with MEM8 := s2.MEM8) /\ !x. ~D x ==> (s1.MEM8 x = s2.MEM8 x)`
+     by fs [same_except_def]
+  \\ qabbrev_tac `m = s2.MEM8`
+  \\ qpat_x_assum `s2 = _` SUBST_ALL_TAC
+  \\ `!x. fetch_bytes s1 x ==> (m x = s1.MEM8 x)`
+     by (rpt strip_tac
+         \\ `~D x` by (qpat_assum `!x. fetch_bytes _ _ ==> ~D x` irule
+                       \\ qpat_assum `fetch_bytes _ _` ACCEPT_TAC)
+         \\ irule EQ_SYM
+         \\ qpat_assum `!x. ~D x ==> _` irule
+         \\ qpat_assum `~D x` ACCEPT_TAC)
+  \\ qspecl_then [`s1`, `m`] mp_tac Fetch_MEM8
+  \\ impl_tac
+  >- (rpt conj_tac \\ first_assum ACCEPT_TAC)
+  \\ disch_then SUBST1_TAC
+  \\ simp_tac std_ss [same_except_upd, Fetch_MEM8_frame]
+  \\ qpat_assum `!x. ~D x ==> _` ACCEPT_TAC
+QED
+
+(* So with translation off for the current privilege, the bytes that
+   Fetch reads are those of parcels at the pc and at pc + 2 that the PMP
+   allows to execute (P §3.7.1 p.72). *)
+Theorem fetch_bytes_off:
+  !s x.
+    ((curPrivilege () s = Machine) \/ satp_bare s) ==>
+    (fetch_bytes s x <=>
+     ~word_bit 0 (PC s) /\
+     (pmpCheck (PC s, 2, PMP_Execute, curPrivilege () s) s /\ in_range (PC s) 2 x \/
+      pmpCheck (PC s + 2w, 2, PMP_Execute, curPrivilege () s) s /\
+      in_range (PC s + 2w) 2 x))
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ asm_simp_tac std_ss [fetch_bytes_def, fetchAddr_off]
+  \\ rw []
+QED
