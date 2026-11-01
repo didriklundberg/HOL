@@ -117,6 +117,18 @@ Proof
   simp [riscv_state_component_equality]
 QED
 
+Theorem MEM8_of_upd:
+  !s m. (s with MEM8 := m).MEM8 = m
+Proof
+  simp []
+QED
+
+Theorem MEM8_upd_eq:
+  !s f g. (s with MEM8 := f = s with MEM8 := g) <=> (f = g)
+Proof
+  rw [riscv_state_component_equality]
+QED
+
 (* A state transformer that commutes with replacing the memory leaves the
    memory unchanged. *)
 Theorem MEM8_comm_frame:
@@ -364,3 +376,407 @@ in
       (List.filter (fn (_, th) => occurs (type_of (lhs_of th)))
          (ListPair.zip (inert_names, inert_MEM8)))
 end
+
+(* ------------------------------------------------------------------------
+   3. Memory primitives
+
+   MEM8 maps a byte address to a byte.  MEM and write'MEM read and write an
+   aligned doubleword of it (the L3 component MEM), and every other access
+   goes through them: rawReadData reads the 8 bytes from an address,
+   rawWriteData writes the low n of them, and rawReadInst reads an
+   instruction parcel.  The theorems below describe each byte by byte, for
+   every alignment, so that no later lemma needs an alignment hypothesis
+   for the physical address.
+   ------------------------------------------------------------------------ *)
+
+(* An address is a doubleword index and an offset in the doubleword. *)
+Theorem addr_split[local]:
+  !a : word64.
+    a = ((w2w ((63 >< 3) a : 61 word) : word64) << 3) + w2w ((2 >< 0) a : word3)
+Proof
+  blastLib.BBLAST_TAC
+QED
+
+Theorem addr_parts[local]:
+  !(i : 61 word) (j : word3).
+    ((63 >< 3) (((w2w i : word64) << 3) + w2w j) = i) /\
+    ((2 >< 0) (((w2w i : word64) << 3) + w2w j) = j)
+Proof
+  blastLib.BBLAST_TAC
+QED
+
+Theorem next_dword[local]:
+  !i : 61 word. ((w2w (i + 1w) : word64) << 3) = ((w2w i : word64) << 3) + 8w
+Proof
+  blastLib.BBLAST_TAC
+QED
+
+Theorem dword_succ_ne[local]:
+  !i : 61 word. i + 1w <> i
+Proof
+  blastLib.BBLAST_TAC
+QED
+
+Theorem w2w_offset[local]:
+  !k. k < 8 ==>
+      (w2w (n2w k : word3) : word64 = n2w k) /\ (w2n (n2w k : word3) = k)
+Proof
+  rw [wordsTheory.w2w_def, wordsTheory.w2n_n2w]
+QED
+
+local
+  fun is_mem8 t =
+    case strip_comb t of
+      (c, [_, _]) => is_const c andalso
+                     fst (dest_const c) = "recordtype.riscv_state.seldef.MEM8"
+    | _ => false
+in
+  (* replace every byte s.MEM8 a of the goal by a variable *)
+  fun gen_mem8_tac (g as (_, w)) =
+    let
+      val ts = Lib.op_mk_set aconv (find_terms is_mem8 w)
+    in
+      MAP_EVERY (fn t => SPEC_TAC (t, genvar (type_of t))) ts g
+    end
+end
+
+val num_ss =
+  std_ss ++ numSimps.REDUCE_ss ++ wordsLib.SIZES_ss ++
+  rewrites [wordsTheory.word_len_def]
+
+(* write'MEM sets the 8 bytes of doubleword i, byte k of the doubleword to
+   byte k of v (little-endian). *)
+Theorem write'MEM_bytes:
+  !v i s x.
+    (write'MEM (v, i) s).MEM8 x =
+    if (63 >< 3) x = i then (7 >< 0) (v >>> (8 * w2n ((2 >< 0) x : word3)))
+    else s.MEM8 x
+Proof
+  rw [write'MEM_def, combinTheory.APPLY_UPDATE_THM]
+  \\ wordsLib.Cases_on_word_value `(2 >< 0) x : word3`
+  \\ rpt (qpat_x_assum `_` mp_tac)
+  \\ blastLib.BBLAST_TAC
+QED
+
+Theorem write'MEM_only_MEM8:
+  !v i s. write'MEM (v, i) s = s with MEM8 := (write'MEM (v, i) s).MEM8
+Proof
+  rw [write'MEM_def, riscv_state_component_equality]
+QED
+
+(* rawReadData reads the 8 bytes from its address, at every alignment. *)
+val rawReadData_dword = Q.prove (
+    `!i j s.
+       j < 8 ==>
+       (rawReadData (((w2w (i : 61 word) : word64) << 3) + w2w (n2w j : word3)) s =
+        let a = ((w2w i : word64) << 3) + w2w (n2w j : word3) in
+          s.MEM8 (a + 7w) @@ s.MEM8 (a + 6w) @@ s.MEM8 (a + 5w) @@
+          s.MEM8 (a + 4w) @@ s.MEM8 (a + 3w) @@ s.MEM8 (a + 2w) @@
+          s.MEM8 (a + 1w) @@ s.MEM8 a)`,
+    rpt strip_tac
+    \\ `(j = 0) \/ (j = 1) \/ (j = 2) \/ (j = 3) \/ (j = 4) \/ (j = 5) \/
+        (j = 6) \/ (j = 7)` by decide_tac
+    \\ rpt BasicProvers.VAR_EQ_TAC
+    \\ simp_tac num_ss [rawReadData_def, MEM_def, LET_THM, addr_parts,
+                        next_dword, w2w_offset]
+    \\ simp_tac num_ss [GSYM wordsTheory.WORD_ADD_ASSOC,
+                        wordsTheory.word_add_n2w, wordsTheory.WORD_ADD_0]
+    \\ gen_mem8_tac
+    \\ blastLib.BBLAST_TAC)
+
+Theorem rawReadData_bytes:
+  !a s.
+    rawReadData a s =
+    s.MEM8 (a + 7w) @@ s.MEM8 (a + 6w) @@ s.MEM8 (a + 5w) @@
+    s.MEM8 (a + 4w) @@ s.MEM8 (a + 3w) @@ s.MEM8 (a + 2w) @@
+    s.MEM8 (a + 1w) @@ s.MEM8 a
+Proof
+  rpt gen_tac
+  \\ qspecl_then [`(63 >< 3) a`, `w2n ((2 >< 0) a : word3)`, `s`] mp_tac
+                 rawReadData_dword
+  \\ simp_tac std_ss [wordsTheory.n2w_w2n, LET_THM, GSYM addr_split]
+  \\ disch_then irule
+  \\ assume_tac (INST_TYPE [alpha |-> ``:3``] wordsTheory.w2n_lt)
+  \\ fs [wordsTheory.dimword_def]
+QED
+
+(* rawWriteData writes the low n bytes of its data to the n bytes from its
+   address, little-endian, and leaves every other byte as it was: also the
+   other bytes of the doubleword(s) it rewrites.  n is the width of every
+   store, 1, 2, 4 or 8. *)
+fun is_w2n_sub t =
+    case Lib.total wordsSyntax.dest_w2n t of
+      SOME u =>
+        (case Lib.total wordsSyntax.dest_word_sub u of
+           SOME (x, y) =>
+             wordsSyntax.is_n2w x andalso wordsSyntax.is_n2w y andalso
+             numSyntax.is_numeral (rand x) andalso numSyntax.is_numeral (rand y)
+         | NONE => false)
+    | NONE => false
+fun w2n_sub_conv t = if is_w2n_sub t then EVAL t else NO_CONV t
+val wd_dword_step = Q.prove (
+    `!a : word64 k.
+       k < 8 ==>
+       ((63 >< 3) (a + n2w k) : 61 word = (63 >< 3) a) \/
+       ((63 >< 3) (a + n2w k) : 61 word = (63 >< 3) a + 1w)`,
+    rpt strip_tac
+    \\ `(k = 0) \/ (k = 1) \/ (k = 2) \/ (k = 3) \/ (k = 4) \/ (k = 5) \/
+        (k = 6) \/ (k = 7)` by decide_tac
+    \\ rw []
+    \\ blastLib.BBLAST_TAC)
+val wd_in_range_dword = Q.prove (
+    `!a n x.
+       in_range a n x /\ n <= 8 ==>
+       ((63 >< 3) x : 61 word = (63 >< 3) a) \/
+       ((63 >< 3) x : 61 word = (63 >< 3) a + 1w)`,
+    REWRITE_TAC [in_range_def]
+    \\ rpt strip_tac
+    \\ `x = a + n2w (w2n (x - a))`
+       by simp_tac std_ss [wordsTheory.n2w_w2n, wordsTheory.WORD_SUB_ADD2]
+    \\ pop_assum SUBST1_TAC
+    \\ irule wd_dword_step
+    \\ decide_tac)
+val wd_far = Q.prove (
+    `!i ix j jx n.
+       j < 8 /\ ix <> i /\ ix <> i + 1w /\ n <= 8 ==>
+       ~in_range (((w2w (i : 61 word) : word64) << 3) + n2w j) n
+                 (((w2w ix : word64) << 3) + w2w (jx : word3))`,
+    rpt strip_tac
+    \\ drule_all wd_in_range_dword
+    \\ `n2w j : word64 = w2w (n2w j : word3)` by simp [w2w_offset]
+    \\ pop_assum SUBST1_TAC
+    \\ simp [addr_parts])
+fun wd_goal j n =
+    let
+      val jt = numSyntax.term_of_int j
+      val nt = numSyntax.term_of_int n
+    in
+      ``!i (ix : 61 word) k s d.
+          k < 8 ==>
+          ((rawWriteData (((w2w (i : 61 word) : word64) << 3) +
+                          w2w (n2w ^jt : word3), d, ^nt) s).MEM8
+             (((w2w ix : word64) << 3) + w2w (n2w k : word3)) =
+           if in_range (((w2w i : word64) << 3) + w2w (n2w ^jt : word3)) ^nt
+                       (((w2w ix : word64) << 3) + w2w (n2w k : word3))
+           then
+             (7 >< 0)
+               (d >>> (8 * w2n ((((w2w ix : word64) << 3) +
+                                 w2w (n2w k : word3)) -
+                                (((w2w i : word64) << 3) +
+                                 w2w (n2w ^jt : word3)))))
+           else s.MEM8 (((w2w ix : word64) << 3) + w2w (n2w k : word3)))``
+    end
+fun wd_k_cases_tac g =
+    (qpat_x_assum `k < 8`
+       (fn th => `(k = 0) \/ (k = 1) \/ (k = 2) \/ (k = 3) \/ (k = 4) \/
+                  (k = 5) \/ (k = 6) \/ (k = 7)` by (assume_tac th \\ decide_tac))
+     \\ pop_assum (REPEAT_TCL DISJ_CASES_THEN SUBST1_TAC)) g
+val wd_dword_ss =
+    [MEM_def, w2w_offset, LET_THM, addr_parts, next_dword, dword_succ_ne,
+     GSYM wordsTheory.WORD_ADD_ASSOC, wordsTheory.word_add_n2w,
+     wordsTheory.WORD_ADD_0, wordsTheory.WORD_SUB_PLUS,
+     wordsTheory.WORD_ADD_SUB2, in_range_def]
+val wd_tac =
+    rpt gen_tac
+    \\ strip_tac
+    \\ simp_tac num_ss [rawWriteData_def, LET_THM, addr_parts, w2w_offset,
+                        write'MEM_bytes]
+    \\ Cases_on `ix = i`
+    >- (pop_assum SUBST_ALL_TAC
+        \\ wd_k_cases_tac
+        \\ simp_tac num_ss wd_dword_ss
+        \\ CONV_TAC (DEPTH_CONV w2n_sub_conv)
+        \\ simp_tac num_ss []
+        \\ gen_mem8_tac
+        \\ blastLib.BBLAST_TAC)
+    \\ Cases_on `ix = i + 1w`
+    >- (pop_assum SUBST_ALL_TAC
+        \\ wd_k_cases_tac
+        \\ simp_tac num_ss wd_dword_ss
+        \\ CONV_TAC (DEPTH_CONV w2n_sub_conv)
+        \\ simp_tac num_ss []
+        \\ gen_mem8_tac
+        \\ blastLib.BBLAST_TAC)
+    \\ asm_simp_tac num_ss [wd_far]
+val rawWriteData_cases =
+    List.concat
+      (List.map (fn n => List.map (fn j => Q.prove (`^(wd_goal j n)`, wd_tac))
+                           [0, 1, 2, 3, 4, 5, 6, 7]) [1, 2, 4, 8])
+val rawWriteData_dword = Q.prove (
+    `!i j (ix : 61 word) jx d n s.
+       ((n = 1) \/ (n = 2) \/ (n = 4) \/ (n = 8)) ==>
+       ((rawWriteData (((w2w (i : 61 word) : word64) << 3) + w2w (j : word3),
+                       d, n) s).MEM8
+          (((w2w ix : word64) << 3) + w2w (jx : word3)) =
+        if in_range (((w2w i : word64) << 3) + w2w j) n
+                    (((w2w ix : word64) << 3) + w2w jx)
+        then
+          (7 >< 0)
+            (d >>> (8 * w2n ((((w2w ix : word64) << 3) + w2w jx) -
+                             (((w2w i : word64) << 3) + w2w j))))
+        else s.MEM8 (((w2w ix : word64) << 3) + w2w jx))`,
+    rpt gen_tac
+    \\ strip_tac
+    \\ `jx = n2w (w2n jx)` by simp []
+    \\ pop_assum SUBST1_TAC
+    \\ `w2n jx < 8`
+       by (assume_tac (INST_TYPE [alpha |-> ``:3``] wordsTheory.w2n_lt)
+           \\ fs [wordsTheory.dimword_def])
+    \\ qabbrev_tac `k = w2n jx`
+    \\ wordsLib.Cases_on_word_value `j`
+    \\ rpt BasicProvers.VAR_EQ_TAC
+    \\ asm_simp_tac std_ss rawWriteData_cases)
+
+Theorem rawWriteData_bytes:
+  !a d n s x.
+    ((n = 1) \/ (n = 2) \/ (n = 4) \/ (n = 8)) ==>
+    ((rawWriteData (a, d, n) s).MEM8 x =
+     if in_range a n x then (7 >< 0) (d >>> (8 * w2n (x - a)))
+     else s.MEM8 x)
+Proof
+  rpt strip_tac
+  \\ qspecl_then [`(63 >< 3) a : 61 word`, `(2 >< 0) a : word3`,
+                  `(63 >< 3) x : 61 word`, `(2 >< 0) x : word3`,
+                  `d`, `n`, `s`] mp_tac rawWriteData_dword
+  \\ asm_simp_tac std_ss [GSYM addr_split]
+QED
+
+Theorem rawWriteData_only_MEM8:
+  !a d n s. rawWriteData (a, d, n) s = s with MEM8 := (rawWriteData (a, d, n) s).MEM8
+Proof
+  rw [rawWriteData_def, write'MEM_def, LET_THM, riscv_state_component_equality]
+QED
+
+Theorem rawWriteData_eq:
+  !a d n s.
+    ((n = 1) \/ (n = 2) \/ (n = 4) \/ (n = 8)) ==>
+    (rawWriteData (a, d, n) s =
+     s with MEM8 :=
+       (\x. if in_range a n x then (7 >< 0) (d >>> (8 * w2n (x - a)))
+            else s.MEM8 x))
+Proof
+  rpt strip_tac
+  \\ once_rewrite_tac [rawWriteData_only_MEM8]
+  \\ simp_tac std_ss [MEM8_upd_eq, FUN_EQ_THM]
+  \\ asm_simp_tac std_ss [rawWriteData_bytes]
+QED
+
+(* So rawWriteData changes at most the n bytes from its address, and when
+   the memory is replaced, the result is the same outside those bytes as
+   the replacement. *)
+Theorem rawWriteData_frame:
+  !a d n s x.
+    ((n = 1) \/ (n = 2) \/ (n = 4) \/ (n = 8)) /\ ~in_range a n x ==>
+    ((rawWriteData (a, d, n) s).MEM8 x = s.MEM8 x)
+Proof
+  rpt strip_tac \\ simp [rawWriteData_bytes]
+QED
+
+Theorem rawWriteData_MEM8:
+  !a d n s m.
+    ((n = 1) \/ (n = 2) \/ (n = 4) \/ (n = 8)) ==>
+    (rawWriteData (a, d, n) (s with MEM8 := m) =
+     rawWriteData (a, d, n) s with
+     MEM8 := (\x. if in_range a n x then (rawWriteData (a, d, n) s).MEM8 x
+                  else m x))
+Proof
+  rpt strip_tac
+  \\ simp [rawWriteData_eq, riscv_state_component_equality, FUN_EQ_THM]
+  \\ rw []
+QED
+
+(* The parts of rawReadData that loads use depend only on the bytes they
+   load. *)
+Theorem in_range_add:
+  !a n k. k < n /\ n <= 18446744073709551616 ==> in_range a n (a + n2w k)
+Proof
+  rw [in_range_def]
+  \\ `k < 18446744073709551616` by decide_tac
+  \\ simp []
+QED
+
+(* replace every byte, of the state or of a replacement memory, by a
+   variable *)
+local
+  fun is_byte t =
+    type_of t = ``:word8`` andalso is_comb t andalso
+    (is_var (rator t) orelse
+     (case strip_comb t of
+        (c, [_, _]) => is_const c andalso
+                       fst (dest_const c) = "recordtype.riscv_state.seldef.MEM8"
+      | _ => false))
+in
+  fun gen_bytes_tac (g as (_, w)) =
+    let
+      val ts = Lib.op_mk_set aconv (find_terms is_byte w)
+    in
+      MAP_EVERY (fn t => SPEC_TAC (t, genvar (type_of t))) ts g
+    end
+end
+
+fun bytes_tac n =
+    rpt strip_tac
+    \\ simp_tac std_ss [rawReadData_bytes, MEM8_of_upd]
+    \\ MAP_EVERY
+         (fn k =>
+            let
+              val a = if k = 0 then ``pa : word64``
+                      else ``pa + n2w ^(numSyntax.term_of_int k) : word64``
+            in
+              sg `m ^a = s.MEM8 ^a`
+              >- (first_x_assum irule
+                  \\ simp [in_range_def, wordsTheory.WORD_ADD_SUB2])
+              \\ pop_assum SUBST1_TAC
+            end) (List.tabulate (n, I))
+    \\ asm_simp_tac std_ss []
+    \\ gen_bytes_tac
+    \\ blastLib.BBLAST_TAC
+
+Theorem rawReadData_agree_1:
+  !pa m s.
+    (!x. in_range pa 1 x ==> (m x = s.MEM8 x)) ==>
+    ((7 >< 0) (rawReadData pa (s with MEM8 := m)) : word8 =
+     (7 >< 0) (rawReadData pa s))
+Proof
+  bytes_tac 1
+QED
+
+Theorem rawReadData_agree_2:
+  !pa m s.
+    (!x. in_range pa 2 x ==> (m x = s.MEM8 x)) ==>
+    ((15 >< 0) (rawReadData pa (s with MEM8 := m)) : word16 =
+     (15 >< 0) (rawReadData pa s))
+Proof
+  bytes_tac 2
+QED
+
+Theorem rawReadData_agree_4:
+  !pa m s.
+    (!x. in_range pa 4 x ==> (m x = s.MEM8 x)) ==>
+    ((31 >< 0) (rawReadData pa (s with MEM8 := m)) : word32 =
+     (31 >< 0) (rawReadData pa s))
+Proof
+  bytes_tac 4
+QED
+
+Theorem rawReadData_agree_8:
+  !pa m s.
+    (!x. in_range pa 8 x ==> (m x = s.MEM8 x)) ==>
+    (rawReadData pa (s with MEM8 := m) = rawReadData pa s)
+Proof
+  bytes_tac 8
+QED
+
+(* rawReadInst reads the low 2 bits of the byte at its address, and then 2
+   or 4 bytes, and sets Skip to the length of the instruction. *)
+Theorem rawReadInst_eq:
+  !a s.
+    rawReadInst a s =
+    if word_bit 0 (s.MEM8 a) /\ word_bit 1 (s.MEM8 a) then
+      (Word (s.MEM8 (a + 3w) @@ s.MEM8 (a + 2w) @@ s.MEM8 (a + 1w) @@ s.MEM8 a),
+       write'Skip 4w s)
+    else (Half (s.MEM8 (a + 1w) @@ s.MEM8 a), write'Skip 2w s)
+Proof
+  rw [rawReadInst_def, boolify8_def, write'Skip_def]
+  \\ fs [boolify8_def]
+QED
