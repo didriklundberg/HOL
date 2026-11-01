@@ -1,0 +1,6 @@
+INCLUDES = ../model ../step
+CLINE_OPTIONS = --qof -j1
+
+ifdef POLY
+HOLHEAP = ../step/riscv-heap
+endif
