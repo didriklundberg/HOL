@@ -780,3 +780,386 @@ Proof
   rw [rawReadInst_def, boolify8_def, write'Skip_def]
   \\ fs [boolify8_def]
 QED
+
+(* The state transformers that do not touch memory leave it unchanged:
+   f_MEM8_frame, from f_MEM8 by MEM8_comm_frame. *)
+local
+  val sty = ``:riscv_state``
+  fun lhs_of th = lhs (snd (strip_forall (concl th)))
+  fun frame (nm, th) =
+    let
+      val l = lhs_of th
+      val (f, args) = strip_comb l
+      val sm = List.last args        (* s with MEM8 := m, that is *)
+      val st = rand sm               (* MEM8_fupd (K m) s *)
+      val m = rand (rand (rator sm))
+      val comm = GEN st (GEN m (SPEC_ALL th))
+      val th' =
+        if type_of l = sty then MATCH_MP MEM8_comm_frame comm
+        else MATCH_MP MEM8_comm_pair_frame comm
+    in
+      SOME (save_thm (nm ^ "_MEM8_frame", GEN_ALL th'))
+    end
+in
+  val inert_frames =
+    List.mapPartial frame
+      (List.filter (fn (_, th) =>
+                      let val ty = type_of (lhs_of th)
+                      in ty = sty orelse
+                         (case Lib.total pairSyntax.dest_prod ty of
+                            SOME (_, b) => b = sty
+                          | NONE => false)
+                      end)
+         (ListPair.zip (inert_names, inert_MEM8)))
+end
+
+(* ML names for the generated lemmas that the proofs below use *)
+fun gen_thm nm = DB.fetch "-" nm
+val effectivePrivilege_MEM8 = gen_thm "effectivePrivilege_MEM8"
+val curPrivilege_MEM8 = gen_thm "curPrivilege_MEM8"
+val pmpCheck_MEM8 = gen_thm "pmpCheck_MEM8"
+val MCSR_MEM8 = gen_thm "MCSR_MEM8"
+val GPR_MEM8 = gen_thm "GPR_MEM8"
+val PC_MEM8 = gen_thm "PC_MEM8"
+val haveRVC_MEM8 = gen_thm "haveRVC_MEM8"
+val read_xepc_MEM8 = gen_thm "read_xepc_MEM8"
+val raise'exception_MEM8 = gen_thm "raise'exception_MEM8"
+val raise'exception_procID = gen_thm "raise'exception_procID"
+val write'CSR_MEM8 = gen_thm "write'CSR_MEM8"
+val write'CSR_procID = gen_thm "write'CSR_procID"
+val write'CSR_MEM8_frame = gen_thm "write'CSR_MEM8_frame"
+val Delta_MEM8 = gen_thm "Delta_MEM8"
+val write'Delta_MEM8 = gen_thm "write'Delta_MEM8"
+val write'Delta_procID = gen_thm "write'Delta_procID"
+val write'Delta_MEM8_frame = gen_thm "write'Delta_MEM8_frame"
+val checkCSROp_MEM8 = gen_thm "checkCSROp_MEM8"
+val signalException_MEM8 = gen_thm "signalException_MEM8"
+val write'GPR_MEM8 = gen_thm "write'GPR_MEM8"
+
+(* ------------------------------------------------------------------------
+   4. Alignment, address translation and the PMP check of an access
+   ------------------------------------------------------------------------ *)
+
+(* The alignment tests of the load and store instructions are natural
+   alignment (U §2.6, P §3.6.4). *)
+Theorem align_tests:
+  !v : word64.
+    (w2n v MOD 1 = 0) /\
+    ((w2n v MOD 2 = 0) <=> ~word_bit 0 v) /\
+    ((w2n v MOD 4 = 0) <=> ((1 >< 0) v = 0w : word2)) /\
+    ((w2n v MOD 8 = 0) <=> ((2 >< 0) v = 0w : word3))
+Proof
+  gen_tac
+  \\ `!k. (w2n v MOD 2 ** k = 0) <=> (v && n2w (2 ** k - 1) = 0w)`
+     by (gen_tac \\ simp [GSYM aligned_w2n, aligned_bitwise_and])
+  \\ rpt conj_tac
+  >- simp []
+  \\ first_x_assum
+       (fn th => map_every (fn k => assume_tac
+                              (SIMP_RULE (srw_ss()) [] (Q.SPEC k th)))
+                           [`1`, `2`, `3`])
+  \\ fs []
+  \\ blastLib.BBLAST_TAC
+QED
+
+(* translateAddr is the identity when translation is off (P §12.1.11
+   p.126; design-smode.md §1.2 [S1]): for privilege M, which it tests
+   first, and when satp.MODE is not Sv39, Sv48 or Sv57 (Bare). *)
+Theorem translateAddr_off:
+  !va ft ac p s.
+    (p = Machine) \/ satp_bare s ==>
+    (translateAddr (va, ft, ac, p) s = TR_Address va)
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  >- simp [translateAddr_def]
+  \\ fs [satp_bare_def]
+  \\ simp [translateAddr_def, SCSR_def]
+QED
+
+(* So an explicit data access (P §3.7 p.70, §3.1.6.4 p.35, [D22]) and a
+   fetch parcel (P §3.7.1 p.72) are checked by the PMP at their virtual
+   address, with the effective and the current privilege. *)
+Theorem dataAddr_off:
+  !va n kind s.
+    (effectivePrivilege () s = Machine) \/ satp_bare s ==>
+    (dataAddr (va, n, kind) s =
+     if pmpCheck (va, n, kind, effectivePrivilege () s) s then TR_Address va
+     else TR_Fault (accessFault (Data, if kind = PMP_Read then Read else Write)))
+Proof
+  rpt gen_tac \\ strip_tac \\ simp [dataAddr_def, translateAddr_off]
+QED
+
+Theorem fetchAddr_off:
+  !va s.
+    (curPrivilege () s = Machine) \/ satp_bare s ==>
+    (fetchAddr va s =
+     if pmpCheck (va, 2, PMP_Execute, curPrivilege () s) s then TR_Address va
+     else TR_Fault Fetch_Fault)
+Proof
+  rpt gen_tac \\ strip_tac \\ simp [fetchAddr_def, translateAddr_off]
+QED
+
+(* Whatever the translation, the physical address that dataAddr and
+   fetchAddr give has passed the PMP check (design-privileged.md §5.4,
+   §5.6.3; design-smode.md §3.11). *)
+Theorem dataAddr_pmpCheck:
+  !va n kind s pa.
+    (dataAddr (va, n, kind) s = TR_Address pa) ==>
+    pmpCheck (pa, n, kind, effectivePrivilege () s) s
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ fs [dataAddr_def, LET_THM]
+  \\ BasicProvers.EVERY_CASE_TAC
+  \\ fs []
+  \\ rw []
+  \\ fs []
+QED
+
+Theorem fetchAddr_pmpCheck:
+  !va s pa.
+    (fetchAddr va s = TR_Address pa) ==>
+    pmpCheck (pa, 2, PMP_Execute, curPrivilege () s) s
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ fs [fetchAddr_def, LET_THM]
+  \\ BasicProvers.EVERY_CASE_TAC
+  \\ fs []
+  \\ rw []
+  \\ fs []
+QED
+
+(* With translation off they read no memory. *)
+Theorem satp_bare_MEM8:
+  !s m. satp_bare (s with MEM8 := m) <=> satp_bare s
+Proof
+  simp [satp_bare_def]
+QED
+
+Theorem dataAddr_off_MEM8:
+  !va n kind s m.
+    (effectivePrivilege () s = Machine) \/ satp_bare s ==>
+    (dataAddr (va, n, kind) (s with MEM8 := m) = dataAddr (va, n, kind) s)
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ simp [dataAddr_def, effectivePrivilege_MEM8, pmpCheck_MEM8,
+           satp_bare_MEM8, translateAddr_off]
+QED
+
+Theorem fetchAddr_off_MEM8:
+  !va s m.
+    (curPrivilege () s = Machine) \/ satp_bare s ==>
+    (fetchAddr va (s with MEM8 := m) = fetchAddr va s)
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ simp [fetchAddr_def, curPrivilege_MEM8, pmpCheck_MEM8, satp_bare_MEM8,
+           translateAddr_off]
+QED
+
+(* ------------------------------------------------------------------------
+   5. The core-local interruptor
+
+   mtime, mtimecmp and msip are memory words in this model ([D67]).  Their
+   readers depend on memory only at the bytes clint_byte names.
+   ------------------------------------------------------------------------ *)
+
+(* The replacement memory m agrees with the memory of s on the CLINT bytes
+   of the hart s.procID. *)
+Definition clint_agree_def:
+  clint_agree s m <=> !x. clint_byte s.procID x ==> (m x = s.MEM8 x)
+End
+
+val side_ss =
+  [in_range_def, wordsTheory.WORD_SUB_REFL, wordsTheory.WORD_ADD_SUB2,
+   wordsTheory.w2n_n2w, wordsTheory.word_0_n2w]
+
+(* prove m t = s.MEM8 t for every byte m t of the goal, from an assumption
+   !x. P x ==> (m x = s.MEM8 x) and the tactic side for P t *)
+fun agree_tac side (g as (_, w)) =
+  let
+    val ts = Lib.op_mk_set aconv
+               (find_terms (fn t => is_comb t andalso is_var (rator t) andalso
+                                    fst (dest_var (rator t)) = "m" andalso
+                                    type_of t = ``:word8``) w)
+    fun one t =
+      let
+        val st = mk_var ("s", ``:riscv_state``)
+        val e = mk_eq (t, ``^st.MEM8 ^(rand t)``)
+      in
+        sg `^e` >- (first_assum irule \\ side) \\ pop_assum SUBST1_TAC
+      end
+  in
+    MAP_EVERY one ts g
+  end
+
+Theorem MEM_agree:
+  !i m s.
+    (!x. in_range ((w2w (i : 61 word) : word64) << 3) 8 x ==> (m x = s.MEM8 x)) ==>
+    (MEM i (s with MEM8 := m) = MEM i s)
+Proof
+  rpt strip_tac
+  \\ simp_tac std_ss [MEM_def, LET_THM, MEM8_of_upd]
+  \\ agree_tac (simp_tac num_ss side_ss)
+  \\ simp_tac std_ss []
+QED
+
+Theorem mtime_addr[local]:
+  (w2w ((63 >< 3) (CLINT_BASE + 49144w : word64) : 61 word) : word64) << 3 =
+  CLINT_BASE + 0xBFF8w
+Proof
+  simp_tac std_ss [CLINT_BASE_def] \\ EVAL_TAC
+QED
+
+Theorem mtimecmp_addr[local]:
+  !h : word8.
+    (w2w ((63 >< 3) (CLINT_BASE + 16384w + 8w * w2w h : word64) : 61 word)
+       : word64) << 3 =
+    CLINT_BASE + 0x4000w + 8w * w2w h
+Proof
+  simp [CLINT_BASE_def] \\ blastLib.BBLAST_TAC
+QED
+
+Theorem mtime_CLINT:
+  !s m. clint_agree s m ==> (mtime () (s with MEM8 := m) = mtime () s)
+Proof
+  rpt strip_tac
+  \\ simp_tac std_ss [mtime_def]
+  \\ irule MEM_agree
+  \\ simp_tac std_ss [mtime_addr]
+  \\ rpt strip_tac
+  \\ fs [clint_agree_def, clint_byte_def, CLINT_BASE_def]
+QED
+
+Theorem mtimecmp_CLINT:
+  !s m.
+    clint_agree s m ==>
+    (mtimecmp s.procID (s with MEM8 := m) = mtimecmp s.procID s)
+Proof
+  rpt strip_tac
+  \\ simp_tac std_ss [mtimecmp_def]
+  \\ irule MEM_agree
+  \\ simp_tac std_ss [mtimecmp_addr]
+  \\ rpt strip_tac
+  \\ fs [clint_agree_def, clint_byte_def]
+QED
+
+Theorem msip_CLINT:
+  !s m.
+    clint_agree s m ==> (msip s.procID (s with MEM8 := m) = msip s.procID s)
+Proof
+  rw [msip_def, clint_agree_def, clint_byte_def] \\ metis_tac []
+QED
+
+Theorem read_mip_CLINT:
+  !s m. clint_agree s m ==> (read_mip () (s with MEM8 := m) = read_mip () s)
+Proof
+  rpt strip_tac
+  \\ asm_simp_tac (srw_ss())
+       [read_mip_def, MCSR_MEM8, mtimecmp_CLINT, mtime_CLINT, msip_CLINT]
+QED
+
+(* So whether an interrupt is taken depends on memory only through the
+   CLINT bytes (P §3.1.9 p.44-45, §3.2.1 p.59). *)
+Theorem checkInterrupts_CLINT:
+  !s m.
+    clint_agree s m ==>
+    (checkInterrupts () (s with MEM8 := m) = checkInterrupts () s)
+Proof
+  rpt strip_tac
+  \\ asm_simp_tac (srw_ss())
+       [checkInterrupts_def, read_mip_CLINT, MCSR_MEM8, curPrivilege_MEM8]
+QED
+
+(* The CSR reads: time is mtime (0xC01), mip (0x344) and sip (0x144)
+   include read_mip. *)
+Theorem CSRMap_CLINT:
+  !s m csr.
+    clint_agree s m ==>
+    (CSRMap csr (s with MEM8 := m) =
+     (FST (CSRMap csr s), SND (CSRMap csr s) with MEM8 := m))
+Proof
+  rpt strip_tac
+  \\ asm_simp_tac (srw_ss())
+       [CSRMap_def, read_mip_CLINT, mtime_CLINT, MCSR_MEM8, read_xepc_MEM8,
+        raise'exception_MEM8]
+  \\ rpt (CASE_TAC
+          \\ asm_simp_tac (srw_ss())
+               [read_mip_CLINT, mtime_CLINT, MCSR_MEM8, read_xepc_MEM8,
+                raise'exception_MEM8])
+QED
+
+Theorem clint_agree_self:
+  !s. clint_agree s s.MEM8
+Proof
+  simp [clint_agree_def]
+QED
+
+Theorem CSRMap_frame:
+  !s csr.
+    ((SND (CSRMap csr s)).MEM8 = s.MEM8) /\
+    ((SND (CSRMap csr s)).procID = s.procID)
+Proof
+  rpt gen_tac
+  \\ conj_tac
+  >- (qspecl_then [`s`, `s.MEM8`, `csr`] mp_tac CSRMap_CLINT
+      \\ simp [clint_agree_self, MEM8_fupd_id]
+      \\ disch_then (fn th => once_rewrite_tac [th])
+      \\ simp [])
+  \\ simp [CSRMap_def]
+  \\ rpt (CASE_TAC \\ simp [raise'exception_procID])
+QED
+
+Theorem clint_agree_frame:
+  !s t m.
+    (t.procID = s.procID) /\ (t.MEM8 = s.MEM8) ==>
+    (clint_agree t m <=> clint_agree s m)
+Proof
+  simp [clint_agree_def]
+QED
+
+Theorem writeCSR_CLINT:
+  !s m csr v.
+    clint_agree s m ==>
+    (writeCSR (csr, v) (s with MEM8 := m) = writeCSR (csr, v) s with MEM8 := m)
+Proof
+  rpt strip_tac
+  \\ simp_tac std_ss [writeCSR_def, LET_THM, UNCURRY_FST_SND, write'CSR_MEM8,
+                      Delta_MEM8, write'Delta_MEM8]
+  \\ qmatch_goalsub_abbrev_tac `CSR csr (t with MEM8 := m)`
+  \\ `clint_agree t m`
+     by (qunabbrev_tac `t`
+         \\ irule (iffRL clint_agree_frame)
+         \\ qexists_tac `s`
+         \\ simp [write'Delta_procID, write'CSR_procID, write'Delta_MEM8_frame,
+                  write'CSR_MEM8_frame])
+  \\ simp [CSR_def, CSRMap_CLINT, write'Delta_MEM8]
+QED
+
+Theorem accessCSR_CLINT:
+  !s m op rd f src csr.
+    clint_agree s m ==>
+    (accessCSR (op, rd, f, src, csr) (s with MEM8 := m) =
+     accessCSR (op, rd, f, src, csr) s with MEM8 := m)
+Proof
+  rpt strip_tac
+  \\ simp_tac std_ss [accessCSR_def, LET_THM, UNCURRY_FST_SND, checkCSROp_MEM8]
+  \\ IF_CASES_TAC
+  \\ asm_simp_tac std_ss [signalException_MEM8, CSR_def, CSRMap_CLINT]
+  \\ `clint_agree (SND (CSRMap csr s)) m`
+     by (irule (iffRL clint_agree_frame) \\ qexists_tac `s` \\ simp [CSRMap_frame])
+  \\ IF_CASES_TAC
+  \\ asm_simp_tac std_ss [writeCSR_CLINT, MCSR_MEM8, write'GPR_MEM8]
+QED
+
+Theorem dfn'WFI_CLINT:
+  !s m. clint_agree s m ==> (dfn'WFI (s with MEM8 := m) = dfn'WFI s with MEM8 := m)
+Proof
+  rpt strip_tac
+  \\ asm_simp_tac std_ss [dfn'WFI_def, curPrivilege_MEM8, MCSR_MEM8, read_mip_CLINT,
+                          signalException_MEM8]
+  \\ rpt (CASE_TAC \\ asm_simp_tac std_ss [signalException_MEM8, MEM8_COND_UP])
+QED
