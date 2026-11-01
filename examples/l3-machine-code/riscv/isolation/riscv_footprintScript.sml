@@ -1702,3 +1702,149 @@ Proof
   \\ asm_simp_tac std_ss [fetch_bytes_def, fetchAddr_off]
   \\ rw []
 QED
+
+(* ------------------------------------------------------------------------
+   8. Run: every instruction
+
+   mem_access lists the instructions that access memory through dataAddr,
+   with their access (virtual address, width, PMP kind); it is NONE for
+   every other instruction.  clint_inst lists those that read the CLINT.
+   Run_writes and Run_reads are the per-instruction lemmas of section 6
+   for all instructions at once, so they show that the list is exhaustive:
+   an instruction outside mem_access changes no memory, and one outside
+   both lists reads none.
+   ------------------------------------------------------------------------ *)
+
+Definition mem_access_def:
+  (mem_access (Load (LB (rd, rs1, offs))) s = SOME (GPR rs1 s + sw2sw offs, (1 : num), PMP_Read)) /\
+  (mem_access (Load (LBU (rd, rs1, offs))) s = SOME (GPR rs1 s + sw2sw offs, (1 : num), PMP_Read)) /\
+  (mem_access (Load (LH (rd, rs1, offs))) s = SOME (GPR rs1 s + sw2sw offs, (2 : num), PMP_Read)) /\
+  (mem_access (Load (LHU (rd, rs1, offs))) s = SOME (GPR rs1 s + sw2sw offs, (2 : num), PMP_Read)) /\
+  (mem_access (Load (LW (rd, rs1, offs))) s = SOME (GPR rs1 s + sw2sw offs, (4 : num), PMP_Read)) /\
+  (mem_access (Load (LWU (rd, rs1, offs))) s = SOME (GPR rs1 s + sw2sw offs, (4 : num), PMP_Read)) /\
+  (mem_access (Load (LD (rd, rs1, offs))) s = SOME (GPR rs1 s + sw2sw offs, (8 : num), PMP_Read)) /\
+  (mem_access (Store (SB (rs1, rs2, offs))) s = SOME (GPR rs1 s + sw2sw offs, (1 : num), PMP_Write)) /\
+  (mem_access (Store (SH (rs1, rs2, offs))) s = SOME (GPR rs1 s + sw2sw offs, (2 : num), PMP_Write)) /\
+  (mem_access (Store (SW (rs1, rs2, offs))) s = SOME (GPR rs1 s + sw2sw offs, (4 : num), PMP_Write)) /\
+  (mem_access (Store (SD (rs1, rs2, offs))) s = SOME (GPR rs1 s + sw2sw offs, (8 : num), PMP_Write)) /\
+  (mem_access (AMO (LR_W (aq, rl, rd, rs1))) s = SOME (GPR rs1 s, (4 : num), PMP_Read)) /\
+  (mem_access (AMO (LR_D (aq, rl, rd, rs1))) s = SOME (GPR rs1 s, (8 : num), PMP_Read)) /\
+  (mem_access (AMO (SC_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_Write)) /\
+  (mem_access (AMO (SC_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_Write)) /\
+  (mem_access (AMO (AMOSWAP_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOSWAP_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOADD_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOADD_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOXOR_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOXOR_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOAND_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOAND_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOOR_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOOR_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOMIN_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOMIN_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOMAX_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOMAX_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOMINU_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOMINU_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOMAXU_W (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (4 : num), PMP_ReadWrite)) /\
+  (mem_access (AMO (AMOMAXU_D (aq, rl, rd, rs1, rs2))) s = SOME (GPR rs1 s, (8 : num), PMP_ReadWrite)) /\
+  (mem_access (FPLoad (FLW (rd, rs1, offs))) s = SOME (GPR rs1 s + sw2sw offs, (4 : num), PMP_Read)) /\
+  (mem_access (FPLoad (FLD (rd, rs1, offs))) s = SOME (GPR rs1 s + sw2sw offs, (8 : num), PMP_Read)) /\
+  (mem_access (FPStore (FSW (rs1, rs2, offs))) s = SOME (GPR rs1 s + sw2sw offs, (4 : num), PMP_Write)) /\
+  (mem_access (FPStore (FSD (rs1, rs2, offs))) s = SOME (GPR rs1 s + sw2sw offs, (8 : num), PMP_Write)) /\
+  (mem_access _ s = NONE)
+End
+
+Definition clint_inst_def:
+  (clint_inst (System (CSRRW _)) = T) /\ (clint_inst (System (CSRRS _)) = T) /\
+  (clint_inst (System (CSRRC _)) = T) /\ (clint_inst (System (CSRRWI _)) = T) /\
+  (clint_inst (System (CSRRSI _)) = T) /\ (clint_inst (System (CSRRCI _)) = T) /\
+  (clint_inst (System WFI) = T) /\ (clint_inst _ = F)
+End
+
+Theorem same_except_inert:
+  !f D s1 s2.
+    (!s m. f (s with MEM8 := m) = f s with MEM8 := m) /\ same_except D s1 s2 ==>
+    same_except D (f s1) (f s2)
+Proof
+  rpt strip_tac
+  \\ match_mp_tac
+       (Q.ISPECL [`f : riscv_state -> riscv_state`, `D : word64 -> bool`,
+                  `s1 : riscv_state`, `s2 : riscv_state`, `\x : word64. F`]
+                 same_except_comm)
+  \\ asm_simp_tac std_ss []
+QED
+
+local
+  val thms = DB.thms "-"
+  fun named suffix =
+    List.mapPartial (fn (n, th) => if String.isSuffix suffix n then SOME th else NONE)
+  val frames = named "_MEM8_frame" thms
+  val writes = named "_writes" thms
+  val reads = List.filter (fn th => true)
+                (List.mapPartial (fn (n, th) =>
+                   if String.isPrefix "dfn'" n andalso String.isSuffix "_reads" n
+                   then SOME th else NONE) thms)
+  val comms = List.mapPartial (fn (n, th) =>
+                if String.isPrefix "dfn'" n andalso String.isSuffix "_MEM8" n
+                then SOME th else NONE) thms
+in
+  fun pair_cases_tac (g as (_, w)) =
+    let
+      val vs = List.filter (fn v => can pairSyntax.dest_prod (type_of v))
+                 (free_vars w)
+    in
+      MAP_EVERY (fn v => PairCases_on `^v`) vs g
+    end
+  val run_frames = frames
+  val run_writes = writes
+  val run_reads = reads
+  val run_comms = comms
+end
+
+Theorem Run_writes:
+  !i s x.
+    (Run i s).MEM8 x <> s.MEM8 x ==>
+    ?acc. (mem_access i s = SOME acc) /\ (SND (SND acc) <> PMP_Read) /\
+          data_bytes acc s x
+Proof
+  Cases_on `i`
+  \\ simp_tac (srw_ss()) [Run_def]
+  \\ rpt CASE_TAC
+  \\ pair_cases_tac
+  \\ simp (mem_access_def :: run_frames)
+  \\ rpt strip_tac
+  \\ FIRST (map (fn th => drule th \\ simp [] \\ NO_TAC) run_writes)
+QED
+
+Theorem Run_reads:
+  !i D s1 s2.
+    same_except D s1 s2 /\
+    (!acc x. (mem_access i s1 = SOME acc) /\ (SND (SND acc) <> PMP_Write) /\
+             data_bytes acc s1 x ==> ~D x) /\
+    (!acc. (mem_access i s1 = SOME acc) ==> (dataAddr acc s2 = dataAddr acc s1)) /\
+    (clint_inst i ==> !x. clint_byte s1.procID x ==> ~D x) ==>
+    same_except D (Run i s1) (Run i s2)
+Proof
+  Cases_on `i`
+  \\ simp_tac (srw_ss()) [Run_def]
+  \\ rpt CASE_TAC
+  \\ pair_cases_tac
+  \\ rpt strip_tac
+  \\ fs [mem_access_def, clint_inst_def]
+  \\ FIRST ((map (fn th => irule th \\ simp [] \\ NO_TAC) run_reads) @
+            [irule same_except_inert \\ simp run_comms \\ NO_TAC])
+QED
+
+(* An instruction outside mem_access writes no memory. *)
+Theorem Run_MEM8_frame:
+  !i s. (mem_access i s = NONE) ==> ((Run i s).MEM8 = s.MEM8)
+Proof
+  rpt strip_tac
+  \\ simp [FUN_EQ_THM]
+  \\ CCONTR_TAC
+  \\ fs []
+  \\ drule Run_writes
+  \\ simp []
+QED
