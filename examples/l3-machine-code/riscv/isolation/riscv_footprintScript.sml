@@ -1163,3 +1163,329 @@ Proof
                           signalException_MEM8]
   \\ rpt (CASE_TAC \\ asm_simp_tac std_ss [signalException_MEM8, MEM8_COND_UP])
 QED
+
+(* ------------------------------------------------------------------------
+   6. The instructions that access memory
+
+   The 37 instruction definitions that call dataAddr are the explicit data
+   accesses (design-privileged.md §5.4 table, §5.6.3): loads, stores,
+   LR/SC, AMOs and the F/D loads and stores; the compressed forms decode
+   to the same instructions (DecodeRVC).  For each one with access
+   (va, n, kind):
+
+     I_writes  (kind PMP_Write or PMP_ReadWrite): a byte that the
+               instruction changes is one of the n bytes from the physical
+               address that dataAddr gave, for an aligned va: data_bytes.
+     I_MEM8_frame (kind PMP_Read): the instruction changes no memory.
+     I_reads   two states that are equal except for the bytes in D give
+               results that are equal except for the bytes in D, provided
+               that D contains none of the bytes the instruction reads
+               (data_bytes, for kind PMP_Read or PMP_ReadWrite) and that
+               dataAddr gives the same result in both (it does when
+               translation is off: dataAddr_off_MEM8).
+
+   None of them has a hypothesis on the privilege or on satp.
+   ------------------------------------------------------------------------ *)
+
+Theorem same_except_upd:
+  !D t M. same_except D t (t with MEM8 := M) <=> !x. ~D x ==> (t.MEM8 x = M x)
+Proof
+  rw [same_except_def]
+QED
+
+Theorem same_except_exists:
+  !D s1 s2.
+    same_except D s1 s2 <=>
+    ?m. (s2 = s1 with MEM8 := m) /\ !x. ~D x ==> (s1.MEM8 x = m x)
+Proof
+  rw [same_except_def, EQ_IMP_THM]
+  >- (qexists_tac `s2.MEM8` \\ simp [])
+  \\ simp []
+QED
+
+Theorem same_except_refl:
+  !D s. same_except D s s
+Proof
+  simp [same_except_def, MEM8_fupd_id]
+QED
+
+(* A function that commutes with replacing memory, possibly given that
+   the replacement agrees on R, keeps two states equal except on D equal
+   except on D, if D and R are disjoint. *)
+Theorem same_except_comm:
+  !f D s1 s2 R.
+    (!m. (!x. R x ==> (m x = s1.MEM8 x)) ==>
+         (f (s1 with MEM8 := m) = f s1 with MEM8 := m)) /\
+    same_except D s1 s2 /\ (!x. R x ==> ~D x) ==>
+    same_except D (f s1) (f s2)
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ `(s2 = s1 with MEM8 := s2.MEM8) /\ !x. ~D x ==> (s1.MEM8 x = s2.MEM8 x)`
+     by fs [same_except_def]
+  \\ qabbrev_tac `m = s2.MEM8`
+  \\ `!x. R x ==> (m x = s1.MEM8 x)`
+     by (rpt strip_tac
+         \\ `~D x` by (qpat_assum `!x. R x ==> ~D x` irule \\ simp [])
+         \\ qpat_assum `!x. ~D x ==> _` (qspec_then `x` mp_tac)
+         \\ simp [])
+  \\ `f s2 = f s1 with MEM8 := m`
+     by (qpat_x_assum `s2 = _` (fn th => once_rewrite_tac [th])
+         \\ qpat_assum `!m. _ ==> _` irule
+         \\ qpat_assum `!x. R x ==> (m x = _)` ACCEPT_TAC)
+  \\ `f (s1 with MEM8 := s1.MEM8) = f s1 with MEM8 := s1.MEM8`
+     by (qpat_assum `!m. _ ==> _` irule \\ simp_tac std_ss [])
+  \\ `(f s1).MEM8 = s1.MEM8`
+     by (qpat_x_assum `f (s1 with MEM8 := s1.MEM8) = _`
+           (mp_tac o AP_TERM ``\t : riscv_state. t.MEM8`` o
+            PURE_REWRITE_RULE [MEM8_fupd_id])
+         \\ simp_tac std_ss [MEM8_of_upd])
+  \\ asm_simp_tac std_ss [same_except_upd]
+QED
+
+Theorem same_except_comm_pair:
+  !f D s1 s2 R.
+    (!m. (!x. R x ==> (m x = s1.MEM8 x)) ==>
+         (f (s1 with MEM8 := m) = (FST (f s1), SND (f s1) with MEM8 := m))) /\
+    same_except D s1 s2 /\ (!x. R x ==> ~D x) ==>
+    (FST (f s1) = FST (f s2)) /\ same_except D (SND (f s1)) (SND (f s2))
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ `(s2 = s1 with MEM8 := s2.MEM8) /\ !x. ~D x ==> (s1.MEM8 x = s2.MEM8 x)`
+     by fs [same_except_def]
+  \\ qabbrev_tac `m = s2.MEM8`
+  \\ `!x. R x ==> (m x = s1.MEM8 x)`
+     by (rpt strip_tac
+         \\ `~D x` by (qpat_assum `!x. R x ==> ~D x` irule \\ simp [])
+         \\ qpat_assum `!x. ~D x ==> _` (qspec_then `x` mp_tac)
+         \\ simp [])
+  \\ `f s2 = (FST (f s1), SND (f s1) with MEM8 := m)`
+     by (qpat_x_assum `s2 = _` (fn th => once_rewrite_tac [th])
+         \\ qpat_assum `!m. _ ==> _` irule
+         \\ qpat_assum `!x. R x ==> (m x = _)` ACCEPT_TAC)
+  \\ `f (s1 with MEM8 := s1.MEM8) = (FST (f s1), SND (f s1) with MEM8 := s1.MEM8)`
+     by (qpat_assum `!m. _ ==> _` irule \\ simp_tac std_ss [])
+  \\ `(SND (f s1)).MEM8 = s1.MEM8`
+     by (qpat_x_assum `f (s1 with MEM8 := s1.MEM8) = _`
+           (mp_tac o AP_TERM ``\p : 'a # riscv_state. (SND p).MEM8`` o
+            PURE_REWRITE_RULE [MEM8_fupd_id])
+         \\ simp_tac std_ss [MEM8_of_upd])
+  \\ asm_simp_tac std_ss [same_except_upd]
+QED
+
+(* every generated commutation lemma and frame *)
+val inert_comms = inert_MEM8
+val all_frames = inert_frames
+
+(* the instructions that access memory through dataAddr: the access, its
+   width and its PMP kind *)
+val data_instructions =
+  [("dfn'LB", "off", 1, "PMP_Read"), ("dfn'LBU", "off", 1, "PMP_Read"),
+   ("dfn'LH", "off", 2, "PMP_Read"), ("dfn'LHU", "off", 2, "PMP_Read"),
+   ("dfn'LW", "off", 4, "PMP_Read"), ("dfn'LWU", "off", 4, "PMP_Read"),
+   ("dfn'LD", "off", 8, "PMP_Read"),
+   ("dfn'SB", "off", 1, "PMP_Write"), ("dfn'SH", "off", 2, "PMP_Write"),
+   ("dfn'SW", "off", 4, "PMP_Write"), ("dfn'SD", "off", 8, "PMP_Write"),
+   ("dfn'LR_W", "reg", 4, "PMP_Read"), ("dfn'LR_D", "reg", 8, "PMP_Read"),
+   ("dfn'SC_W", "reg", 4, "PMP_Write"), ("dfn'SC_D", "reg", 8, "PMP_Write")] @
+  List.concat
+    (map (fn opn => [("dfn'AMO" ^ opn ^ "_W", "reg", 4, "PMP_ReadWrite"),
+                    ("dfn'AMO" ^ opn ^ "_D", "reg", 8, "PMP_ReadWrite")])
+         ["SWAP", "ADD", "XOR", "AND", "OR", "MIN", "MAX", "MINU", "MAXU"]) @
+  [("dfn'FLW", "off", 4, "PMP_Read"), ("dfn'FLD", "off", 8, "PMP_Read"),
+   ("dfn'FSW", "off", 4, "PMP_Write"), ("dfn'FSD", "off", 8, "PMP_Write")]
+
+val () =
+  if length data_instructions = 37 andalso
+     Lib.set_eq (map #1 data_instructions)
+       (Lib.intersect touching_names
+          (map (fst o dest_const)
+             (List.filter (fn c => List.exists (fn d => fst (dest_const d) = "dataAddr")
+                                     (find_terms is_const
+                                        (concl (DB.fetch "riscv" (fst (dest_const c) ^ "_def")))))
+                (map (fn n => prim_mk_const {Name = n, Thy = "riscv"})
+                     (List.filter (String.isPrefix "dfn'") touching_names)))))
+  then ()
+  else raise ERR "data_instructions"
+         "the instructions that call dataAddr are not the 37 listed"
+
+fun inst_def nm = DB.fetch "riscv" (nm ^ "_def")
+fun inst_args nm =
+  case strip_comb (lhs (snd (strip_forall (concl (inst_def nm))))) of
+    (_, [args]) => args
+  | _ => raise ERR "inst_args" nm
+fun var_named args v =
+  valOf (List.find (fn t => fst (dest_var t) = v) (free_vars args))
+fun inst_va nm vk s =
+  let val args = inst_args nm in
+    if vk = "off" then
+      ``GPR ^(var_named args "rs1") ^s + sw2sw ^(var_named args "offs")``
+    else ``GPR ^(var_named args "rs1") ^s``
+  end
+fun kind_tm k = prim_mk_const {Name = k, Thy = "riscv"}
+fun inst_access (nm, vk, n, k) s =
+  ``(^(inst_va nm vk s), ^(numSyntax.term_of_int n), ^(kind_tm k))``
+
+fun writes_goal (e as (nm, vk, n, k)) =
+  let
+    val args = inst_args nm
+    val c = prim_mk_const {Name = nm, Thy = "riscv"}
+    val s = ``s : riscv_state``
+    val g = ``(^c ^args ^s).MEM8 x <> ^s.MEM8 x ==>
+              data_bytes ^(inst_access e s) ^s x``
+  in
+    list_mk_forall (free_vars args @ [s, ``x : word64``], g)
+  end
+
+fun frame_goal (nm, _, _, _) =
+  let
+    val args = inst_args nm
+    val c = prim_mk_const {Name = nm, Thy = "riscv"}
+    val s = ``s : riscv_state``
+  in
+    list_mk_forall (free_vars args @ [s], ``(^c ^args ^s).MEM8 = ^s.MEM8``)
+  end
+
+fun reads_goal (e as (nm, vk, n, k)) =
+  let
+    val args = inst_args nm
+    val c = prim_mk_const {Name = nm, Thy = "riscv"}
+    val s1 = ``s1 : riscv_state``
+    val s2 = ``s2 : riscv_state``
+    val D = ``D : word64 -> bool``
+    val acc = inst_access e s1
+    val hyps =
+      [``same_except ^D ^s1 ^s2``] @
+      (if k = "PMP_Write" then []
+       else [``!x. data_bytes ^acc ^s1 x ==> ~^D x``]) @
+      [``dataAddr ^acc ^s2 = dataAddr ^acc ^s1``]
+    val g = mk_imp (list_mk_conj hyps,
+                    ``same_except ^D (^c ^args ^s1) (^c ^args ^s2)``)
+  in
+    list_mk_forall (free_vars args @ [D, s1, s2], g)
+  end
+
+fun writes_tac def =
+  rpt gen_tac
+  \\ simp_tac std_ss [def, LET_THM]
+  \\ rpt (IF_CASES_TAC \\ asm_simp_tac std_ss all_frames)
+  \\ rpt (CASE_TAC \\ asm_simp_tac std_ss all_frames)
+  \\ simp (rawWriteData_bytes :: data_bytes_def :: align_tests :: all_frames)
+  \\ rw []
+  \\ fs []
+
+(* in a branch with dataAddr acc s1 = TR_Address c, m agrees with s1 on
+   the n bytes from c *)
+fun agree_on_access_tac n (g as (asl, w)) =
+  let
+    fun head t = Lib.total (fst o dest_const o fst o strip_comb) t
+    fun is_hit t =
+      case Lib.total dest_eq t of
+        SOME (l, r) => head l = SOME "dataAddr" andalso head r = SOME "TR_Address"
+      | NONE => false
+  in
+    case List.find is_hit asl of
+      NONE => ALL_TAC g
+    | SOME t =>
+        let
+          val c = rand (rhs t)
+          val e = ``!x. in_range ^c ^(numSyntax.term_of_int n) x ==>
+                        (m x = s1.MEM8 x)``
+        in
+          (sg `^e`
+           >- (rpt strip_tac
+               \\ irule EQ_SYM
+               \\ qpat_assum `!x. ~D x ==> _` irule
+               \\ qpat_assum `!x. data_bytes _ _ x ==> _` irule
+               \\ asm_simp_tac (srw_ss()) [data_bytes_def, align_tests])) g
+        end
+  end
+
+fun reads_tac (def, n, reader) =
+  rpt gen_tac
+  \\ strip_tac
+  \\ qpat_x_assum `same_except _ _ _`
+       (strip_assume_tac o REWRITE_RULE [same_except_exists])
+  \\ BasicProvers.VAR_EQ_TAC
+  \\ simp_tac std_ss ([def, LET_THM] @ inert_comms)
+  \\ asm_rewrite_tac []
+  \\ rpt (IF_CASES_TAC \\ asm_simp_tac std_ss [])
+  \\ rpt (CASE_TAC \\ asm_simp_tac std_ss [])
+  \\ (if reader then agree_on_access_tac n else ALL_TAC)
+  \\ asm_simp_tac (srw_ss())
+       ([rawReadData_agree_1, rawReadData_agree_2, rawReadData_agree_4,
+         rawReadData_agree_8, rawWriteData_MEM8, same_except_upd,
+         rawWriteData_bytes] @ inert_comms @ all_frames)
+  \\ rw []
+  \\ fs []
+
+val data_instruction_thms =
+  map (fn (e as (nm, _, n, k)) =>
+         let
+            val def = inst_def nm
+            val w = if k = "PMP_Read" then
+                      save_thm (nm ^ "_MEM8_frame",
+                                Q.prove (`^(frame_goal e)`,
+                                         rpt gen_tac \\ simp_tac std_ss [def, LET_THM]
+                                         \\ rpt (IF_CASES_TAC \\ asm_simp_tac std_ss all_frames)
+                                         \\ rpt (CASE_TAC \\ asm_simp_tac std_ss all_frames)))
+                    else save_thm (nm ^ "_writes", Q.prove (`^(writes_goal e)`, writes_tac def))
+            val r = save_thm (nm ^ "_reads",
+                              Q.prove (`^(reads_goal e)`,
+                                       reads_tac (def, n, k <> "PMP_Write")))
+         in
+            (nm, w, r)
+         end) data_instructions
+
+(* The CSR instructions and WFI read the CLINT (time, mip, sip; mip for WFI
+   in S-mode under TW), and write no memory. *)
+val clint_instructions =
+  ["dfn'CSRRW", "dfn'CSRRS", "dfn'CSRRC", "dfn'CSRRWI", "dfn'CSRRSI",
+   "dfn'CSRRCI", "dfn'WFI"]
+
+local
+  fun comm_thm nm =
+    if nm = "dfn'WFI" then dfn'WFI_CLINT
+    else Q.prove (
+      `!args s m. clint_agree s m ==>
+          (^(prim_mk_const {Name = nm, Thy = "riscv"}) args (s with MEM8 := m) =
+           ^(prim_mk_const {Name = nm, Thy = "riscv"}) args s with MEM8 := m)`,
+      rpt strip_tac
+      \\ PairCases_on `args`
+      \\ asm_simp_tac std_ss [inst_def nm, GPR_MEM8, accessCSR_CLINT])
+  fun mk (nm, comm) =
+    let
+      val c = prim_mk_const {Name = nm, Thy = "riscv"}
+      val fterm = if nm = "dfn'WFI" then c
+                  else mk_comb (c, mk_var ("args", fst (dom_rng (type_of c))))
+      fun app s = mk_comb (fterm, s)
+      val fr = Q.prove (
+        `!s. (^(app ``s : riscv_state``)).MEM8 = s.MEM8`,
+        rpt gen_tac
+        \\ mp_tac (Q.INST [`m` |-> `s.MEM8`] (SPEC_ALL comm))
+        \\ simp [clint_agree_self, MEM8_fupd_id]
+        \\ disch_then (fn th => once_rewrite_tac [th])
+        \\ simp [])
+      val rd = Q.prove (
+        `!D s1 s2.
+           same_except D s1 s2 /\ (!x. clint_byte s1.procID x ==> ~D x) ==>
+           same_except D ^(app ``s1 : riscv_state``) ^(app ``s2 : riscv_state``)`,
+        rpt strip_tac
+        \\ match_mp_tac
+             (ISPECL [fterm, ``D : word64 -> bool``, ``s1 : riscv_state``,
+                      ``s2 : riscv_state``, ``clint_byte s1.procID``]
+                     same_except_comm)
+        \\ rpt conj_tac
+        \\ TRY (first_assum ACCEPT_TAC)
+        \\ rpt strip_tac
+        \\ irule comm
+        \\ simp [clint_agree_def])
+    in
+      (save_thm (nm ^ "_MEM8_frame", GEN_ALL fr),
+       save_thm (nm ^ "_reads", GEN_ALL rd))
+    end
+in
+  val clint_instruction_thms =
+    map (fn nm => (nm, mk (nm, comm_thm nm))) clint_instructions
+end
