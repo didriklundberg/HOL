@@ -1782,10 +1782,9 @@ local
     List.mapPartial (fn (n, th) => if String.isSuffix suffix n then SOME th else NONE)
   val frames = named "_MEM8_frame" thms
   val writes = named "_writes" thms
-  val reads = List.filter (fn th => true)
-                (List.mapPartial (fn (n, th) =>
-                   if String.isPrefix "dfn'" n andalso String.isSuffix "_reads" n
-                   then SOME th else NONE) thms)
+  val reads = List.mapPartial (fn (n, th) =>
+                if String.isPrefix "dfn'" n andalso String.isSuffix "_reads" n
+                then SOME th else NONE) thms
   val comms = List.mapPartial (fn (n, th) =>
                 if String.isPrefix "dfn'" n andalso String.isSuffix "_MEM8" n
                 then SOME th else NONE) thms
