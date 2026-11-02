@@ -1518,3 +1518,64 @@ Theorem Next_U_fetch_words:
 Proof
   metis_tac [Next_U_fetch, pmpCheck_MCSR]
 QED
+
+(* ------------------------------------------------------------------------
+   The physical forms, with no hypothesis on the privilege or satp
+
+   Whatever the translation, the physical address of an access passed the
+   PMP check (dataAddr_pmpCheck, fetchAddr_pmpCheck; design-privileged.md
+   §5.6.3, design-smode.md §3.11), and the model never writes a page-table
+   entry (A and D are managed by software, design-smode.md [S3]).
+   ------------------------------------------------------------------------ *)
+
+(* Every byte that a step changes is a byte of the physical address of the
+   data access of its instruction, which passed the PMP check for the
+   effective privilege *)
+Theorem Next_writes_pa:
+  !s x.
+    ((Next s).MEM8 x <> s.MEM8 x) ==>
+    ?i va n kind pa.
+      (step_inst s = SOME i) /\ (mem_access i s = SOME (va, n, kind)) /\
+      ((kind = PMP_Write) \/ (kind = PMP_ReadWrite)) /\ (w2n va MOD n = 0) /\
+      (dataAddr (va, n, kind) (exec_state s) = TR_Address pa) /\
+      in_range pa n x /\ pmpCheck (pa, n, kind, effectivePrivilege () s) s
+Proof
+  rpt strip_tac
+  \\ Cases_on `step_inst s`
+  >- (qpat_x_assum `step_inst s = NONE`
+        (strip_assume_tac o REWRITE_RULE [step_inst_NONE])
+      \\ qpat_x_assum `_ <> _` mp_tac
+      \\ imp_res_tac Next_interrupt
+      \\ asm_simp_tac std_ss [cycle_step_fields]
+      \\ simp (next_pre_def :: frame_thms))
+  \\ rename1 `step_inst s = SOME i`
+  \\ `(Run i (exec_state s)).MEM8 x <> (exec_state s).MEM8 x`
+     by (imp_res_tac Next_inst
+         \\ fs [cycle_step_fields, next_post_MEM8_frame, exec_state_fields])
+  \\ drule Run_writes
+  \\ strip_tac
+  \\ PairCases_on `acc`
+  \\ `mem_access i s = SOME (acc0, acc1, acc2)`
+     by metis_tac [mem_access_eq, exec_state_fields]
+  \\ qpat_x_assum `data_bytes _ _ _` (strip_assume_tac o REWRITE_RULE [data_bytes_def])
+  \\ qexistsl_tac [`i`, `acc0`, `acc1`, `acc2`, `pa`]
+  \\ fs []
+  \\ `pmpCheck (pa, acc1, acc2, effectivePrivilege () (exec_state s)) (exec_state s)`
+     by metis_tac [dataAddr_pmpCheck]
+  \\ `pmpCheck (pa, acc1, acc2, effectivePrivilege () s) s`
+     by metis_tac [exec_state_priv, pmpCheck_eq_MCSR, exec_state_fields]
+  \\ asm_simp_tac std_ss []
+  \\ metis_tac [mem_access_kind]
+QED
+
+(* Every byte of the parcels that a step fetches is a byte of the physical
+   address of a parcel that passed the PMP check for execution by the
+   current privilege (P §3.7.1 p.72) *)
+Theorem fetch_bytes_pmp:
+  !s x.
+    fetch_bytes s x ==>
+    ?pa. in_range pa 2 x /\ pmpCheck (pa, 2, PMP_Execute, curPrivilege () s) s
+Proof
+  rw [fetch_bytes_def]
+  \\ metis_tac [fetchAddr_pmpCheck]
+QED
