@@ -5,9 +5,13 @@ This directory proves, about the HOL4 RISC-V model alone (`riscvTheory`, generat
 item 9 of HolBA's `S3K_VERIFICATION_PLAN.md`, and is stated so that the S3K work (item 10) can
 compose it with the kernel's contracts, but nothing here mentions S3K.
 
-Stage 1 (this commit series) builds the foundation, `riscv_footprintTheory`: what every
-function on the way from the step function `Next` to memory reads and writes. Stage 2 states
-and proves theorems (a)-(d) of §2 in `riscv_isolationTheory`, on top of it.
+Stage 1 builds the foundation, `riscv_footprintTheory`: what every function on the way from
+the step function `Next` to memory reads and writes. Stage 2 proves theorems (a)-(d) of §2 in
+`riscv_isolationTheory`, on top of it and of `riscv_pmpTheory` (the PMP check byte by byte and
+as a function of the CSR words) and `riscv_framesTheory` (the fields each function never
+updates), and checks them on a concrete configuration in `riscv_isolation_exampleTheory`. Both
+stages are done; "As proved" at the end of §2 lists where the proved statements differ from
+the planned ones above it, and `README.md` states every theorem in words.
 
 ## 0. Sources and notation
 
@@ -48,7 +52,7 @@ In HOL, `s : riscv_state`; the hart is `s.procID`; memory is `s.MEM8 : word64 ->
 | `mem_access i s` | the access `(va, n, kind)` of instruction `i`, for the 37 data-memory instructions of §3.2; `NONE` otherwise | the list of memory instructions |
 | `clint_inst i` | `T` for `CSRRW`, `CSRRS`, `CSRRC`, `CSRRWI`, `CSRRSI`, `CSRRCI`, `WFI` | the instructions that read the CLINT |
 
-### 1.2 For the theorems (Stage 2)
+### 1.2 For the theorems (Stage 2, as planned; "As proved" in §2 has the changes)
 
 The PMP permission of a byte for U-mode is the model's own check of a 1-byte access:
 
@@ -261,6 +265,32 @@ after a U-mode instruction.
 | `D` has no CLINT byte | (c) | the interrupt check reads `mtime` and `mtimecmp` (MTIP, P §3.2.1 p.59) and `msip` (P §3.1.9 p.44) from memory ([D67]) without a PMP check, and so does a CSR read of `time`: two states that differ there may differ in whether a timer interrupt is taken. This is the platform's timer, not a PMP leak. |
 | `c_NextFetch = NONE` | (d) | as above. |
 
+### As proved in Stage 2
+
+All the theorems above exist in `riscv_isolationTheory` (and `riscv_pmpTheory` for the PMP
+lemmas) under the names given, with these differences, each of which keeps or strengthens the
+planned content:
+
+| Planned | Proved |
+|---|---|
+| `pmpCheck_byte` with `p <> Machine` | no hypothesis on the privilege: an entry that decides an access decides each of its bytes, and an access that no entry matches has no byte that one matches |
+| `pmpCheck_words` with `pmpaddr_of` | `pmpCheck_words` with `\i. pmpaddr i s`, the form in which the S3K contracts state the address registers, and `pmpCheck_MCSR` with `pmpaddr_of` |
+| `pmp_legal m` on the machine CSRs | `pmp_legal cfg0 cfg2` on the two configuration words (`pmp_legal_bits` gives the bit form); `pmp_legal_write_read` for every access and privilege; and `legalize_pmpcfg_legal`, that every value a CSR write stores is legal if the old one was |
+| `step_inst` with an inline case | `step_inst` through `fetch_inst`, the instruction that `fetchAndExecute` decodes from a fetch result |
+| `fetch_fault_state` as one record update | the same state, written with a `let` and an `if` on the parcel |
+| `Next_U_frame` with the fields listed inline | the same fields in `mcsr_same` (the 16 `pmpaddr` registers as fields) and `scsr_same`; in addition FS stays Off when it was Off, and `c_NextFetch` is `NONE` after the step, so the hypothesis is an invariant |
+| `Next_U_trap` | in addition the destination is M or S |
+
+Theorems that the plan did not list: `Next_writes_pa` and `fetch_bytes_pmp`, the physical forms
+of (a) and (b) with no hypothesis on the privilege or `satp`; `Next_fetch_fault`, the fetch
+fault for any privilege with translation off; `Next_reads`, (c) for any privilege with
+translation off, with `step_reads` and `step_reads_U`; `Next_U_reads_unchanged`, (c) with
+`pmp_legal`, the bytes of `D` unchanged in both runs; `Next_U_shape`, the four forms of a
+U-mode step; `Run_U`, every instruction in U-mode; `Next_U_stays`, a U-mode step that does not
+trap keeps the hypotheses and the PMP configuration; `Next_U_writes_words` and
+`Next_U_fetch_words`, the word-level forms; `pmpCheck_first`, `pmpCheck_byte_first`,
+`pmpCheck_sub`, `pmpCheck_kind`, `pmpCheck_eq`.
+
 ## 3. The memory paths of the model
 
 ### 3.1 How the list is computed and shown exhaustive
@@ -414,29 +444,42 @@ acc) <> PMP_Read) /\ data_bytes acc s x`. `Run_reads`: `same_except D` is preser
 that `dataAddr` of its access agrees. `Run_MEM8_frame`. One case analysis over the instruction
 datatype, using the lemmas of layers 1 and 5.
 
-### 4.8 Layer 7 (Stage 2): Next and theorems (a)-(d)
+### 4.8 Layer 7 (Stage 2): Next and theorems (a)-(d), as built
 
-1. `Next` unfolds into `clear_logs`, the reset of `c_minstret_written`, `checkInterrupts`,
-   then either `takeTrap` or `fetchAndExecute` followed by the `NextFetch` dispatch
-   (`incrInstret`, `write'PC`, `write'NextFetch`, `mret`, `sret`, `excDest`, `takeTrap`) and the
-   cycle counter. All but `checkInterrupts`, `Fetch` and `Run` are in layer 1.
-2. (a): the frames of layer 1, `Fetch_MEM8_frame` and `Run_writes`; the access is evaluated
-   on `SND (Fetch () s)`, which has the GPRs, CSRs and privilege of `s`; `dataAddr_off` turns
-   `data_bytes` into the `pmpCheck` of `va`; `pmpCheck_byte` and `pmpCheck_RW` give the byte
-   form.
-3. (c): `same_except` through the chain: layer 1 by `same_except_comm`, `checkInterrupts_CLINT`,
-   `Fetch_reads` and `Run_reads` with their side conditions from `fetch_bytes_off`,
-   `dataAddr_off`, `dataAddr_off_MEM8`, `fetchAddr_off_MEM8`, `pmpCheck_byte` and `pmpCheck_RW`.
-4. (b): `fetch_bytes_off` and `pmpCheck_byte`; for the fault, `fetchAddr_off`, `Fetch_def`,
-   `dfn'FETCH_FAULT_def` and the `Trap` branch of `Next`.
-5. (d): the same syntactic classification as layer 1, for each field of (d) in turn (the
-   functions whose definitions never update `c_MCSR`, `c_SCSR`, `c_privilege`, `c_fpr`,
-   `c_UCSR` or `c_ReserveLoad` get frames by the generic tactic), and a U-mode analysis of the
-   rest: `checkCSROp` with `curPrivilege () s = User` allows only the U-level CSRs
-   (`fflags`, `frm`, `fcsr`, and reads of `cycle`, `time`, `instret`), and the first three only
-   with FS not Off; `MRET`, `SRET`, `WFI` and `SFENCE.VMA` are illegal in U-mode; the F/D
-   instructions are illegal with FS Off; `takeTrap` writes only the trap fields.
-6. Corollaries: `U_bare_intro`, `pmpCheck_words`, `pmp_legal_write_read`.
+1. `Next_split`: `Next s` is `cycle_step` of either `takeTrap (T, interruptIndex i, PC s, 0w,
+   p) (next_pre s)` (an interrupt) or `next_post b (fetchAndExecute () (next_pre s))`, where
+   `next_pre` is `clear_logs` and the reset of `c_minstret_written`, `next_post` the
+   `NextFetch` dispatch and `cycle_step` the cycle count. `Fetch` and `checkInterrupts` commute
+   with `next_pre` (`Fetch_next_pre`, `checkInterrupts_next_pre`, from the `_log` and
+   `_minstret` lemmas of `riscv_framesTheory`), so `step_inst s` reads `s` itself, and
+   `Next_inst` gives `Next s` as `next_post` of `Run i (exec_state s)`, where `exec_state s`
+   has the registers, CSRs, privilege and memory of `s` (`exec_state_fields`).
+2. `riscv_framesTheory` (generated, like layer 1): for every function reachable from `Next` but
+   `Next`, `fetchAndExecute` and `Run`, the fields it never updates are unchanged (`<f>_frame`,
+   205 theorems), one conjunctive frame per function over twelve fields.
+3. (a): `Run_writes` on `exec_state s`, `data_bytes_exec` (with translation off the data bytes
+   in `exec_state s` are those in `s`), `dataAddr_off`; the byte form by `pmpCheck_byte` and
+   `pmpCheck_RW`; the physical form by `dataAddr_pmpCheck`.
+4. (b): `fetch_bytes_off` and `pmpCheck_byte`; for the fault, `Fetch_fault` (the fetch result
+   from `fetchAddr_off`, `rawReadInst_eq` and `fetchAddr_Skip`, unfolding only the outer
+   `let`s of `Fetch` so that the `write'Delta` chains of the other branches are never
+   expanded) and `Next_inst`.
+5. (c): `Next_reads` writes the second state as the first with its memory replaced; the
+   interrupt check by `checkInterrupts_CLINT`; then `Fetch_reads` and `Run_reads`, their side
+   conditions from `step_reads`, `fetch_bytes_next_pre`, `data_bytes_exec`, `fetchAddr_off_MEM8`
+   and `dataAddr_off_MEM8`; `next_post` and `cycle_step` by `same_except_inert`.
+6. (d): `Run_U`, one lemma per instruction definition generated by one tactic (unfold, split
+   the conditionals and cases, simplify with the frames, the FP lemmas `write'fcsr_MCSR`,
+   `setFP_MCSR`, `accrueFlags_MCSR`, `writeFPR_MCSR`, and `write'NextFetch_NextFetch`); the CSR
+   instructions by `accessCSR_U` from `checkCSROp_User`, `CSR_U_state` and `writeCSR_FP`.
+   `run_ok` states the effect: privilege, pc, S-level CSRs unchanged; M-level CSRs unchanged or
+   only FS set to Dirty while FS is not Off (`fs_dirty_of`); the FP state unchanged while FS is
+   Off; the reservation only by LR/SC; NextFetch none, a branch or a trap; a trap with the
+   M-level CSRs and memory unchanged. `Next_U_shape` combines `Run_U` with `Next_split` into
+   the four forms of a U-mode step, and `takeTrap_fields` says what a trap entry to M or S
+   writes; `Next_U_frame`, `Next_U_trap` and `Next_U_stays` follow.
+7. Corollaries: `U_bare_intro`, `pmpCheck_words`, `pmpCheck_MCSR`, `pmp_legal_write_read`,
+   `Next_U_writes_words`, `Next_U_fetch_words`.
 
 ## 5. Decisions
 
@@ -451,3 +494,7 @@ datatype, using the lemmas of layers 1 and 5.
 | I7 | Weakest privilege hypotheses | `effectivePrivilege () s = User` for data, `curPrivilege () s = User` for fetch and step legality | the model's own predicates; `U_bare_intro` gives the register-level form |
 | I8 | Word-level PMP predicate | `pmp_check` over the 18 CSR words, equal to `pmpCheck` | HolBA's contracts fix the words, not a state |
 | I9 | Byte or access granularity | both: (a) gives the access, as the model checks it, and the byte | the access form is the spec's; the byte form composes with region reasoning |
+| I10 | Frames for (d) | generated per function, one conjunctive theorem over twelve fields (`riscv_framesTheory`), and one U-mode lemma per instruction (`dfn'<I>_U`) | the same structural route as layer 1: covers every function once, and fails to build if the model gains an update of the privilege, the pc, the S-level CSRs or the reservation elsewhere |
+| I11 | Ancestor `riscv_step` | not used | `riscv_stepTheory` defines its own `Fetch_def`, which shadows the model's when the theory is opened; its `takeTrap_Machine` is not needed, since `takeTrap_fields` covers trap entry to M and to S |
+| I12 | Case analysis of a U-mode step | once, in `Next_U_shape` | `Next_U_frame`, `Next_U_trap` and `Next_U_stays` each read off the four forms |
+| I13 | Translated case | physical forms of (a) and (b) with no hypothesis (`Next_writes_pa`, `fetch_bytes_pmp`); byte forms and (c) with Bare satp | the PMP checks the physical address whatever the translation, and the model never writes a PTE; the PTE reads would have to join the read set of (c) |
