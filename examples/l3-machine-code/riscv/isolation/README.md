@@ -24,8 +24,9 @@ covered. `DESIGN.md` has the design, the memory paths of the model and the proof
     Holmake
 
 It uses the heap `../step/riscv-heap` and builds `../model` and `../step` first if needed. From
-clean, with `../step` built, the five theories take 4 m 34 s (single job: footprint 2 m 02 s,
-frames 49 s, pmp 7 s, isolation 1 m 20 s, example 4 s) and at most 2.1 GB of memory. No
+clean, with `../step` built, the five theories take about 4 m 40 s (single job: footprint
+2 m 05 s, frames 52 s, pmp 8 s, isolation 1 m 21 s, example 5 s) and at most 2.1 GB of memory
+(peak resident size of the build). No
 `cheat`, axiom or oracle is used: every theorem of the five theories carries only the
 `DISK_THM` tag of a loaded theory, and none of them declares an axiom.
 
