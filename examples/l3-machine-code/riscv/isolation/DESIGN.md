@@ -246,8 +246,9 @@ the PMP CSRs and `satp` among them. FS may become Dirty (3) through an F/D instr
 and `fcsr` do not change. `Next_U_trap`: either the privilege is unchanged and no trap field
 changed, or the step was a trap entry (`takeTrap`, DP §4.6), to M or to S as `mideleg` or
 `medeleg` delegate (P §3.1.8; DP §4.4; `takeTrap` never goes to U), from a state `t` with the
-same CSRs, privilege, pc and memory as `s` (a trapping instruction has no other architectural
-effect: "PMP violations are always trapped precisely", P §3.7 p.70, DP §5.5), and the memory is
+same CSRs, privilege, pc and memory as `s` (a trapping instruction has changed no M-level CSR
+and no memory before signalling: "PMP violations are always trapped precisely", P §3.7 p.70,
+DP §5.5; its effect on the GPRs, FPRs and the reservation is not stated), and the memory is
 unchanged.
 
 The hypothesis `c_NextFetch = NONE` is an invariant of reachable states between steps (`Next`

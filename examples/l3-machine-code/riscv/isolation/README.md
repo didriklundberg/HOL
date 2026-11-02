@@ -129,14 +129,15 @@ FLD).
   trap entry (`takeTrap`) to M or S, as `mideleg` (an interrupt, from `checkInterrupts`) or
   `medeleg` (an exception, `excDest`) delegate (P §3.1.8 p.42-43), from a state with the CSRs,
   privilege, pc, memory and hart of `s`; the trap changes no memory. An instruction that traps
-  had no other architectural effect ("PMP violations are always trapped precisely", P §3.7
-  p.70).
+  changed no M-level CSR and no memory before signalling ("PMP violations are always trapped
+  precisely", P §3.7 p.70); the theorem says nothing about the GPRs, FPRs, `fcsr` or the
+  reservation of a trapping instruction.
 - `Next_U_shape`: the four forms of a U-mode step: the entry of an interrupt, the next
   instruction, a branch, or the trap entry of an exception raised by the instruction.
 - `Run_U` (with one lemma `dfn'<I>_U` per instruction definition, 161 of them): every
   instruction run in U-mode keeps the privilege, the pc and the S-level CSRs, keeps the
   M-level CSRs but for FS, never schedules MRET or SRET (illegal in U-mode, P §3.3.2 p.61),
-  and traps precisely. `checkCSROp_User`: U-mode may access only `fflags`, `frm`, `fcsr`
+  and when it traps has changed no M-level CSR and no memory. `checkCSROp_User`: U-mode may access only `fflags`, `frm`, `fcsr`
   (while FS is not Off) and read `cycle`, `time`, `instret` (P §2.1 p.13).
 - `Next_U_stays`: a U-mode step that does not change the privilege leaves `U_bare`,
   `c_NextFetch = NONE` and the PMP configuration as they were, so the theorems apply again to
@@ -160,8 +161,9 @@ FLD).
   weaker kinds. `pmpCheck_RW`: an AMO's check implies a read and a write check.
 - `pmp_legal`, `pmp_legal_bits` (the bit form `cfg >>> 1 && ~cfg && 0x0101010101010101w =
   0w`), `pmp_legal_write_read` (a writable byte is readable), `legalize_pmpcfg_legal` (every
-  value that a write of `pmpcfg0`/`pmpcfg2` stores is legal if the old one was; the reset
-  value 0 is legal).
+  value `legalize_pmpcfg` computes is legal if the old one was; that `writeCSR` of `pmpcfg0`
+  and `pmpcfg2` stores `legalize_pmpcfg (v, old)` is by reading `writeCSR`, and the legality
+  of the reset value 0 follows from `pmp_legal_bits`; neither is stated as a theorem).
 
 ### The sanity check (`riscv_isolation_exampleTheory`)
 
