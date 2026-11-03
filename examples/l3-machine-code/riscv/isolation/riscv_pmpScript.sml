@@ -9,7 +9,12 @@
      pmp_legal_write_read);
    - the check is a function of the 18 PMP CSR words of the hart, pmpcfg0,
      pmpcfg2 and pmpaddr0-15 (pmpCheck_words, with the word-level
-     pmp_check), which is the form in which HolBA's contracts state them.
+     pmp_check), which is the form in which HolBA's contracts state them;
+   - a byte that U-mode may access lies in the region of the
+     lowest-numbered entry that matches it, and that entry allows the
+     access (pmpCheck_User_entry, pmp_check_User_byte); when every entry is
+     OFF or NAPOT, that region is the NAPOT region of the entry's pmpaddr
+     word (pmp_check_User_napot, pmpCheck_User_napot).
    ------------------------------------------------------------------------ *)
 Theory riscv_pmp
 Ancestors
@@ -560,4 +565,214 @@ Proof
            \\ MAP_EVERY (fn t => SPEC_TAC (t, genvar ``:word8``)) ts) g
         end)
   \\ blastLib.BBLAST_TAC
+QED
+
+(* ------------------------------------------------------------------------
+   6. A byte that U-mode may access, and entries that are OFF or NAPOT
+
+   For a 1-byte access by U-mode the check is the permission of the
+   lowest-numbered entry that matches the byte, and there must be such an
+   entry (P §3.7.1.3 p.73).  An entry is OFF or NAPOT when the two bits of
+   its A field are equal (Table 23 p.72); an OFF entry matches no byte, and
+   a NAPOT entry matches the 2^(t+3) bytes that its pmpaddr word encodes
+   with t trailing ones (Table 24 p.72).  So when every entry is OFF or
+   NAPOT, a byte that U-mode may access lies in the NAPOT region of an
+   entry that allows the access, and no lower entry matches it.  The
+   theorems are stated for the state (pmpCheck, pmpRegion) and for the
+   words (pmp_check, pmp_region) as pmpCheck_words relates them.
+   ------------------------------------------------------------------------ *)
+
+(* The entry that decides a 1-byte access by U-mode matches the byte and
+   allows the access *)
+Theorem pmpCheck_User_entry:
+  !x kind s.
+    pmpCheck (x, 1, kind, User) s ==>
+    ?i lo hi. i < 16 /\ (pmpRegion (n2w i) s = SOME (lo, hi)) /\ lo <=+ x /\ x <+ hi /\
+              pmpPermits (pmpcfg_ent (n2w i) s, kind) /\
+              !j. j < i ==> ~pmp_match s (n2w j) x
+Proof
+  rw [pmpCheck_byte_first, pmp_match_def]
+  \\ metis_tac []
+QED
+
+(* Entries 8-15 are configured by pmpcfg2: they are OFF when it is 0 *)
+Theorem pmpRegion_pmpcfg2_off:
+  !k s.
+    8 <= k /\ k < 16 /\ ((s.c_MCSR s.procID).pmpcfg2 = 0w) ==>
+    (pmpRegion (n2w k) s = NONE)
+Proof
+  rpt strip_tac
+  \\ `(k = 8) \/ (k = 9) \/ (k = 10) \/ (k = 11) \/ (k = 12) \/ (k = 13) \/
+      (k = 14) \/ (k = 15)` by decide_tac
+  \\ rpt BasicProvers.VAR_EQ_TAC
+  \\ asm_simp_tac (srw_ss()) [pmpRegion_def, pmpcfg_ent_byte, pmp_cfg_byte_def,
+                              rec'pmpcfg_def, LET_THM]
+QED
+
+(* So with pmpcfg2 = 0 the deciding entry is one of entries 0-7 *)
+Theorem pmpCheck_User_low:
+  !x kind s.
+    ((s.c_MCSR s.procID).pmpcfg2 = 0w) /\ pmpCheck (x, 1, kind, User) s ==>
+    ?i lo hi. i < 8 /\ (pmpRegion (n2w i) s = SOME (lo, hi)) /\ lo <=+ x /\ x <+ hi /\
+              pmpPermits (pmpcfg_ent (n2w i) s, kind) /\
+              !j. j < i ==> ~pmp_match s (n2w j) x
+Proof
+  rpt strip_tac
+  \\ drule pmpCheck_User_entry
+  \\ strip_tac
+  \\ Cases_on `i < 8`
+  >- metis_tac []
+  \\ `pmpRegion (n2w i) s = NONE` by (irule pmpRegion_pmpcfg2_off \\ simp [])
+  \\ fs []
+QED
+
+(* Entry i of the PMP CSR words w = (pmpcfg0, pmpcfg2, addr) matches byte
+   x: the word-level pmp_match *)
+Definition pmp_match_w_def:
+  pmp_match_w (w : word64 # word64 # (word4 -> word64)) (i : word4) (x : word64) <=>
+    ?lo hi. (pmp_region w i = SOME (lo, hi)) /\ lo <=+ x /\ x <+ hi
+End
+
+Theorem pmp_match_words:
+  !i x s.
+    pmp_match s i x <=>
+    pmp_match_w ((s.c_MCSR s.procID).pmpcfg0, (s.c_MCSR s.procID).pmpcfg2,
+                 \j. pmpaddr j s) i x
+Proof
+  simp_tac std_ss [pmp_match_def, pmp_match_w_def, pmpRegion_words]
+QED
+
+(* For a 1-byte access by U-mode an entry has a verdict iff it matches the
+   byte, and the verdict is its permission for the kind *)
+Theorem pmp_entry_User_byte:
+  !w i x kind.
+    pmp_entry w i (x, x, kind, User) =
+    if pmp_match_w w i x then
+      SOME (pmp_perm (pmp_cfg_byte (FST w) (FST (SND w)) i) kind)
+    else NONE
+Proof
+  rpt gen_tac
+  \\ PairCases_on `w`
+  \\ simp_tac std_ss [pmp_entry_def, pmp_match_w_def]
+  \\ Cases_on `pmp_region (w0, w1, w2) i`
+  \\ simp_tac (srw_ss()) []
+  \\ PairCases_on `x'`
+  \\ simp_tac (srw_ss()) []
+  \\ rw []
+  \\ fs [wordsTheory.WORD_NOT_LOWER, wordsTheory.WORD_NOT_LOWER_EQUAL]
+  \\ metis_tac [wordsTheory.WORD_LOWER_EQ_ANTISYM, wordsTheory.WORD_LOWER_REFL,
+                wordsTheory.WORD_LOWER_LOWER_EQ_TRANS,
+                wordsTheory.WORD_LOWER_EQ_LOWER_TRANS,
+                wordsTheory.WORD_NOT_LOWER, wordsTheory.WORD_NOT_LOWER_EQUAL]
+QED
+
+(* P §3.7.1.3 p.73 for a 1-byte access by U-mode, over the words: some
+   entry matches the byte, no lower entry does, and its byte allows the
+   kind *)
+Theorem pmp_check_User_byte:
+  !w x kind.
+    pmp_check w (x, 1, kind, User) <=>
+    ?i. i < 16 /\ pmp_match_w w (n2w i) x /\
+        (!j. j < i ==> ~pmp_match_w w (n2w j) x) /\
+        pmp_perm (pmp_cfg_byte (FST w) (FST (SND w)) (n2w i)) kind
+Proof
+  rpt gen_tac
+  \\ PairCases_on `w`
+  \\ simp_tac (srw_ss()) [pmp_check_def, pmp_first_GENLIST, pmp_entry_User_byte,
+                          wordsTheory.WORD_ADD_0]
+  \\ simp_tac std_ss [COND_RAND, COND_RATOR, optionTheory.IS_SOME_DEF,
+                      optionTheory.THE_DEF, optionTheory.NOT_SOME_NONE]
+  \\ eq_tac
+  \\ rpt strip_tac
+  \\ qexists_tac `i`
+  \\ fs []
+QED
+
+(* The NAPOT region [lo, hi) that a pmpaddr word y encodes, as pmp_region
+   computes it: m has the trailing ones of y and the zero above them set *)
+Definition napot_region_def:
+  napot_region (y : word64) =
+    let m = y ?? (y + 1w); lo = (y && ~m) << 2 in (lo, lo + ((m + 1w) << 2))
+End
+
+Theorem pmp_region_off_napot:
+  !cfg0 cfg2 addr i.
+    (((4 >< 3) (pmp_cfg_byte cfg0 cfg2 i) = 0w : word2) ==>
+     (pmp_region (cfg0, cfg2, addr) i = NONE)) /\
+    (((4 >< 3) (pmp_cfg_byte cfg0 cfg2 i) = 3w : word2) ==>
+     (pmp_region (cfg0, cfg2, addr) i = SOME (napot_region (addr i))))
+Proof
+  rw [pmp_region_def, napot_region_def, LET_THM]
+QED
+
+(* Bits 4 and 3 (A) of every byte of the two configuration words equal: the
+   bit form in which a contract states that every entry is OFF or NAPOT *)
+Theorem off_or_napot_bytes:
+  !cfg0 cfg2 i.
+    ((cfg0 >>> 1 ?? cfg0) && 0x0808080808080808w = 0w) /\
+    ((cfg2 >>> 1 ?? cfg2) && 0x0808080808080808w = 0w) ==>
+    ((4 >< 3) (pmp_cfg_byte cfg0 cfg2 i) = 0w : word2) \/
+    ((4 >< 3) (pmp_cfg_byte cfg0 cfg2 i) = 3w : word2)
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ strip_assume_tac (SPEC ``i : word4`` word4_cases)
+  \\ rpt BasicProvers.VAR_EQ_TAC
+  \\ rpt (pop_assum mp_tac)
+  \\ simp_tac (srw_ss()) [pmp_cfg_byte_def]
+  \\ blastLib.BBLAST_TAC
+QED
+
+(* With every entry OFF or NAPOT, a byte that U-mode may access lies in the
+   NAPOT region of the lowest-numbered entry that matches it, and that
+   entry's byte allows the access *)
+Theorem pmp_check_User_napot:
+  !cfg0 cfg2 addr x kind.
+    ((cfg0 >>> 1 ?? cfg0) && 0x0808080808080808w = 0w) /\
+    ((cfg2 >>> 1 ?? cfg2) && 0x0808080808080808w = 0w) /\
+    pmp_check (cfg0, cfg2, addr) (x, 1, kind, User) ==>
+    ?i. i < 16 /\ ((4 >< 3) (pmp_cfg_byte cfg0 cfg2 (n2w i)) = 3w : word2) /\
+        pmp_perm (pmp_cfg_byte cfg0 cfg2 (n2w i)) kind /\
+        FST (napot_region (addr (n2w i))) <=+ x /\
+        x <+ SND (napot_region (addr (n2w i))) /\
+        !j. j < i ==> ~pmp_match_w (cfg0, cfg2, addr) (n2w j) x
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ `!i. ((4 >< 3) (pmp_cfg_byte cfg0 cfg2 i) = 0w : word2) \/
+          ((4 >< 3) (pmp_cfg_byte cfg0 cfg2 i) = 3w : word2)`
+     by metis_tac [off_or_napot_bytes]
+  \\ qpat_x_assum `pmp_check _ _` (strip_assume_tac o REWRITE_RULE [pmp_check_User_byte])
+  \\ qexists_tac `i`
+  \\ asm_rewrite_tac []
+  \\ first_x_assum (qspec_then `n2w i` strip_assume_tac)
+  \\ fs [pmp_match_w_def, pmp_region_off_napot]
+QED
+
+(* The same for the PMP CSR words of a state, as pmpCheck_words reads them:
+   pmpcfg0, pmpcfg2 and pmpaddr0-15 of the current hart *)
+Theorem pmpCheck_User_napot:
+  !s x kind.
+    (((s.c_MCSR s.procID).pmpcfg0 >>> 1 ?? (s.c_MCSR s.procID).pmpcfg0) &&
+     0x0808080808080808w = 0w) /\
+    (((s.c_MCSR s.procID).pmpcfg2 >>> 1 ?? (s.c_MCSR s.procID).pmpcfg2) &&
+     0x0808080808080808w = 0w) /\
+    pmpCheck (x, 1, kind, User) s ==>
+    ?i. i < 16 /\
+        ((4 >< 3) (pmp_cfg_byte (s.c_MCSR s.procID).pmpcfg0
+                                (s.c_MCSR s.procID).pmpcfg2 (n2w i)) = 3w : word2) /\
+        pmp_perm (pmp_cfg_byte (s.c_MCSR s.procID).pmpcfg0
+                               (s.c_MCSR s.procID).pmpcfg2 (n2w i)) kind /\
+        FST (napot_region (pmpaddr (n2w i) s)) <=+ x /\
+        x <+ SND (napot_region (pmpaddr (n2w i) s)) /\
+        !j. j < i ==>
+            ~pmp_match_w ((s.c_MCSR s.procID).pmpcfg0, (s.c_MCSR s.procID).pmpcfg2,
+                          \k. pmpaddr k s) (n2w j) x
+Proof
+  rpt gen_tac
+  \\ strip_tac
+  \\ qpat_x_assum `pmpCheck _ _` (assume_tac o REWRITE_RULE [pmpCheck_words])
+  \\ drule_all pmp_check_User_napot
+  \\ BETA_TAC
+  \\ REWRITE_TAC []
 QED
