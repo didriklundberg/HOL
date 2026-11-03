@@ -1,3 +1,8 @@
+# Holmake builds every theory of this directory: riscv_footprint, riscv_frames,
+# riscv_pmp, riscv_isolation and riscv_isolation_example, which do not have the
+# step library's riscv_stepTheory as an ancestor (DESIGN.md I11, checked by the
+# build of riscv_trap), and riscv_trap and riscv_trap_example, which have
+# (DESIGN.md I14).  ../step is in INCLUDES for them and for the heap.
 INCLUDES = ../model ../step
 CLINE_OPTIONS = --qof -j1
 

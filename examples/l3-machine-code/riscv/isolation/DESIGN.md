@@ -13,6 +13,13 @@ updates), and checks them on a concrete configuration in `riscv_isolation_exampl
 stages are done; "As proved" at the end of §2 lists where the proved statements differ from
 the planned ones above it, and `README.md` states every theorem in words.
 
+Two additions serve a kernel that keeps every PMP entry OFF or NAPOT and takes system calls by
+`ecall`: `riscv_pmpTheory` says in which region a byte that U-mode may access lies (§2 (e)),
+and `riscv_trapTheory` gives the exact trap state of a U-mode step that runs ECALL and what a
+step that takes no interrupt says of the timer (§2 (f)), checked on a concrete state in
+`riscv_trap_exampleTheory`. `riscv_trapTheory` is the first theory of the directory with the
+step library's `riscv_stepTheory` as an ancestor (I11, I14).
+
 ## 0. Sources and notation
 
 | Ref | Document |
@@ -99,6 +106,18 @@ The instruction that a step runs, when it takes no interrupt, is
 
 (`Next` evaluates both on the state after `clear_logs` and the reset of `c_minstret_written`,
 which neither reads; Stage 2 proves that.)
+
+### 1.3 For the region of a U-mode byte and the trap entry (built)
+
+| Name | Definition | Meaning |
+|---|---|---|
+| `pmp_match_w w i x` | `?lo hi. (pmp_region w i = SOME (lo, hi)) /\ lo <=+ x /\ x <+ hi` | entry `i` of the PMP CSR words `w = (pmpcfg0, pmpcfg2, addr)` matches byte `x`: `pmp_match` over the words |
+| `napot_region y` | `let m = y ?? (y + 1w); lo = (y && ~m) << 2 in (lo, lo + ((m + 1w) << 2))` | the bytes `[lo, hi)` that a NAPOT entry with address word `y` matches (Table 24 p.72): `m` has the trailing ones of `y` and the zero above them set, as in `pmp_region` |
+
+An entry is OFF or NAPOT iff bits 4 and 3 of its configuration byte are equal; for all sixteen
+entries at once this is the bit condition `(cfg >>> 1 ?? cfg) && 0x0808080808080808w = 0w` on
+`pmpcfg0` and on `pmpcfg2`, the hypothesis H4 (`pmp_off_or_napot`) of the step library's
+M-mode contract.
 
 ## 2. The theorems
 
@@ -292,6 +311,118 @@ trap keeps the hypotheses and the PMP configuration; `Next_U_writes_words` and
 `Next_U_fetch_words`, the word-level forms; `pmpCheck_first`, `pmpCheck_byte_first`,
 `pmpCheck_sub`, `pmpCheck_kind`, `pmpCheck_eq`.
 
+### (e) The region of a byte that U-mode may access (`riscv_pmpTheory`, built)
+
+(a)-(c) say that a U-mode step touches only bytes `x` with `pmpCheck (x, 1, kind, User) s`.
+A kernel that relates the PMP configuration to its own records of who owns which memory needs
+to know where such a byte lies. For U-mode the first matching entry decides and some entry must
+match (§3.7.1.3 p.73); with only OFF and NAPOT entries, that entry's region is the NAPOT region
+of its own address word:
+
+    pmpCheck_User_entry:
+      !x kind s.
+        pmpCheck (x, 1, kind, User) s ==>
+        ?i lo hi. i < 16 /\ (pmpRegion (n2w i) s = SOME (lo, hi)) /\ lo <=+ x /\ x <+ hi /\
+                  pmpPermits (pmpcfg_ent (n2w i) s, kind) /\
+                  !j. j < i ==> ~pmp_match s (n2w j) x
+
+    pmp_check_User_byte:
+      !w x kind.
+        pmp_check w (x, 1, kind, User) <=>
+        ?i. i < 16 /\ pmp_match_w w (n2w i) x /\ (!j. j < i ==> ~pmp_match_w w (n2w j) x) /\
+            pmp_perm (pmp_cfg_byte (FST w) (FST (SND w)) (n2w i)) kind
+
+    pmp_check_User_napot:
+      !cfg0 cfg2 addr x kind.
+        ((cfg0 >>> 1 ?? cfg0) && 0x0808080808080808w = 0w) /\
+        ((cfg2 >>> 1 ?? cfg2) && 0x0808080808080808w = 0w) /\
+        pmp_check (cfg0, cfg2, addr) (x, 1, kind, User) ==>
+        ?i. i < 16 /\ ((4 >< 3) (pmp_cfg_byte cfg0 cfg2 (n2w i)) = 3w : word2) /\
+            pmp_perm (pmp_cfg_byte cfg0 cfg2 (n2w i)) kind /\
+            FST (napot_region (addr (n2w i))) <=+ x /\ x <+ SND (napot_region (addr (n2w i))) /\
+            !j. j < i ==> ~pmp_match_w (cfg0, cfg2, addr) (n2w j) x
+
+`pmpCheck_User_napot` is `pmp_check_User_napot` for a state, with `(s.c_MCSR s.procID).pmpcfg0`,
+`(s.c_MCSR s.procID).pmpcfg2` and `\k. pmpaddr k s` for the words (so `pmpaddr (n2w i) s` for
+`addr (n2w i)`), by `pmpCheck_words`. The steps: `pmp_entry_User_byte` (a 1-byte User access
+gets the verdict `NONE` from an entry that does not match it and `pmp_perm` of the entry's byte
+from one that does), `pmp_first_GENLIST` (the first verdict decides), `off_or_napot_bytes` (the
+bit condition makes every A field 0 or 3) and `pmp_region_off_napot` (an OFF entry has no region,
+a NAPOT entry has `napot_region` of its address word). `pmpRegion_pmpcfg2_off` and
+`pmpCheck_User_low` add that with `pmpcfg2 = 0` entries 8-15 are OFF, so the deciding entry is
+one of 0-7. An aligned access of 2, 4 or 8 bytes is covered byte by byte through
+`pmpCheck_byte`.
+
+### (f) Trap entry from U-mode (`riscv_trapTheory`, built)
+
+`Next_U_trap` says that a U-mode step that traps is some `takeTrap` from a state with the CSRs,
+privilege, pc and memory of `s`, but not with which cause (and so not into which mode), with
+which trap value, or what happens to the GPRs. For the step by which a process makes a system
+call, all of that is determined:
+
+    Next_U_ecall:
+      !s. (curPrivilege () s = User) /\ (step_inst s = SOME (System ECALL)) /\
+          ~word_bit 8 (s.c_MCSR s.procID).medeleg ==>
+          ((Next s).procID = s.procID) /\ ((Next s).c_privilege s.procID = 3w) /\
+          ((Next s).c_PC s.procID = trapVector ((s.c_MCSR s.procID).mtvec, F, 8w)) /\
+          (((Next s).c_MCSR s.procID).mcause = <| EC := 8w; Int := F |>) /\
+          (((Next s).c_MCSR s.procID).mepc = PC s) /\ (((Next s).c_MCSR s.procID).mtval = 0w) /\
+          (((Next s).c_MCSR s.procID).mstatus =
+             (s.c_MCSR s.procID).mstatus with
+               <| MIE := F; MPIE := (s.c_MCSR s.procID).mstatus.MIE; MPP := 0w |>) /\
+          ((Next s).c_MCSR s.procID with
+             <| mcause := (s.c_MCSR s.procID).mcause; mepc := (s.c_MCSR s.procID).mepc;
+                mtval := (s.c_MCSR s.procID).mtval; mstatus := (s.c_MCSR s.procID).mstatus |> =
+           s.c_MCSR s.procID) /\
+          ((Next s).c_SCSR = s.c_SCSR) /\ ((Next s).c_gpr = s.c_gpr) /\ ((Next s).MEM8 = s.MEM8) /\
+          ((Next s).c_NextFetch s.procID = NONE) /\ ((Next s).exception = s.exception)
+
+ECALL raises the environment call from U-mode, cause 8 (P §3.3.1 p.60-61, Table 16 p.50);
+not delegated (P §3.1.8 p.42), it is taken into M-mode, which writes `mcause`, `mepc` (the pc
+of the `ecall`) and `mtval` (0, P §3.1.16 p.53), sets MPIE to MIE, MIE to 0 and MPP to U
+(P §3.1.6.1 p.32), the privilege to M and the pc to the trap vector (P §3.1.7 p.41). The
+statement lists the four trap fields and puts them back in one record equation, so that every
+other M-level CSR of the hart (the PMP CSRs, `mtvec`, `mscratch`, `misa`, ...) is unchanged
+without being named; the S-level CSRs, the GPRs and memory are unchanged as whole functions.
+
+Which steps take no interrupt, and what that says of the timer:
+
+    checkInterrupts_U_MTIP:
+      !s. (curPrivilege () s = User) /\ word_bit 7 (reg'mie (s.c_MCSR s.procID).mie) /\
+          (checkInterrupts () s = NONE) ==>
+          ~(mtimecmp s.procID s <=+ mtime () s)
+
+    Next_U_stays_no_interrupt:
+      !s. (s.c_privilege s.procID = 0w) /\
+          ((Next s).c_privilege s.procID = s.c_privilege s.procID) ==>
+          (checkInterrupts () s = NONE)
+
+In U-mode both branches of `checkInterrupts` are enabled: an interrupt pending and enabled in
+`mie` is taken into M if `mideleg` does not delegate it and into S if it does (P §3.1.9 p.43,
+§12.1.3 p.117), so with MTIE set and no interrupt taken MTIP is clear, whatever `mideleg`
+holds; `read_mip` computes MTIP as `mtimecmp <=+ mtime` from the CLINT (P §3.2.1 p.59, [D67]).
+An interrupt is taken into M or S and changes the privilege of a U-mode hart, so a step that
+keeps the privilege took none. With `step_inst_SOME` (a step that runs an instruction took no
+interrupt), a kernel that keeps MTIE set can conclude from either kind of step from U-mode, one
+that stays in U-mode or one that runs ECALL, that no timer interrupt was pending at its start.
+
+The words: `reg'mcause_8` (`reg'mcause c = 8w` iff `c.EC = 8w` and `~c.Int`, P §3.1.15 Figure 22
+p.49), `trapVector_direct` (`(1 >< 0) tvec = 0w ==> trapVector (tvec, intr, ec) = tvec`: in
+Direct mode every trap goes to BASE, which is `mtvec` itself, Table 15 p.41) and
+`trapVector_exception` (`trapVector (tvec, F, ec) = tvec && ~3w`). Helpers: `Fetch_exception`
+and `exec_state_exception` (the spec's `Fetch` returns `F_Error` instead of raising, so it keeps
+the `exception` field), `curPrivilege_User` (privilege 0 or the reserved 2).
+
+`riscv_trap_exampleTheory` instantiates these on the region of `riscv_isolation_exampleTheory`
+(`ex_ecall`, `ex_timer_only`) and gives a concrete state that runs `ecall` there
+(`ex_ecall_state_witness`, `ex_ecall_witness_trap`), so the hypotheses of `Next_U_ecall` can hold
+together.
+
+As proved, compared with the statements these theorems were designed with: all are as designed
+but `pmpCheck_User_low`, which has in addition the conjunct `!j. j < i ==> ~pmp_match s (n2w j)
+x` (the deciding entry is the first that matches). Theorems added: `pmp_match_words`,
+`step_inst_SOME`, `curPrivilege_User`, `exec_state_exception`, `trapVector_exception`.
+
 ## 3. The memory paths of the model
 
 ### 3.1 How the list is computed and shown exhaustive
@@ -482,6 +613,29 @@ datatype, using the lemmas of layers 1 and 5.
 7. Corollaries: `U_bare_intro`, `pmpCheck_words`, `pmpCheck_MCSR`, `pmp_legal_write_read`,
    `Next_U_writes_words`, `Next_U_fetch_words`.
 
+### 4.9 The region of a U-mode byte and the trap entry, as built
+
+1. (e), state form: `pmpCheck_User_entry` is `pmpCheck_byte_first` at User privilege (the
+   unmatched case needs `p = Machine`, and the lock bit only matters for M); entries 8-15 read
+   bytes of `pmpcfg2`, which `pmpRegion_pmpcfg2_off` evaluates for each of them.
+2. (e), word form: `pmp_entry_User_byte` by cases on `pmp_region` and the order lemmas of
+   `wordsTheory`; `pmp_check_User_byte` from it with `pmp_first_GENLIST`; `off_or_napot_bytes`
+   by bit-blasting each of the sixteen bytes of `pmp_cfg_byte`; `pmp_region_off_napot` by
+   unfolding `pmp_region`; `pmp_check_User_napot` combines them, and `pmpCheck_User_napot` is
+   its instance through `pmpCheck_words`.
+3. (f), `Next_U_ecall`: `Next_inst` gives `Next s` as `cycle_step (next_post b (v, Run (System
+   ECALL) (exec_state s)))`; `Run` of ECALL in U-mode only sets `c_NextFetch` to the trap of
+   `UMode_Env_Call` with value 0 (`dfn'ECALL_def`, `signalEnvCall_def`, `signalException_def`,
+   `setTrap_def`); the `Trap` branch of `next_post` clears `c_NextFetch` and calls `takeTrap`
+   with cause 8 and destination `excDest (8w, User)`, which is M when bit 8 of `medeleg` is
+   clear; `takeTrap_Machine` of the step library gives the trap state as one record update, and
+   `cycle_step` changes only `c_cycles`. `exec_state_fields` and `exec_state_exception` relate
+   the fields of `exec_state s` to those of `s`.
+4. (f), interrupts: `checkInterrupts_U_MTIP` unfolds `checkInterrupts` with `read_mip_eval` of
+   the step library (`mip` as a word, MTIP as `mtimecmp <=+ mtime`) and bit-blasts the two
+   `highestInterrupt` arguments; `Next_U_stays_no_interrupt` takes the interrupt case of
+   `Next_split` (`Next_interrupt`), in which `takeTrap_fields` gives privilege 3 or 1.
+
 ## 5. Decisions
 
 | # | Question | Choice | Reason |
@@ -496,6 +650,10 @@ datatype, using the lemmas of layers 1 and 5.
 | I8 | Word-level PMP predicate | `pmp_check` over the 18 CSR words, equal to `pmpCheck` | HolBA's contracts fix the words, not a state |
 | I9 | Byte or access granularity | both: (a) gives the access, as the model checks it, and the byte | the access form is the spec's; the byte form composes with region reasoning |
 | I10 | Frames for (d) | generated per function, one conjunctive theorem over twelve fields (`riscv_framesTheory`), and one U-mode lemma per instruction (`dfn'<I>_U`) | the same structural route as layer 1: covers every function once, and fails to build if the model gains an update of the privilege, the pc, the S-level CSRs or the reservation elsewhere |
-| I11 | Ancestor `riscv_step` | not used | `riscv_stepTheory` defines its own `Fetch_def`, which shadows the model's when the theory is opened; its `takeTrap_Machine` is not needed, since `takeTrap_fields` covers trap entry to M and to S |
+| I11 | Ancestor `riscv_step` | not used by `riscv_footprintTheory`, `riscv_framesTheory`, `riscv_pmpTheory`, `riscv_isolationTheory` and `riscv_isolation_exampleTheory`; the build of `riscv_trapTheory` checks it for `riscv_isolationTheory` and the theories below it | `riscv_stepTheory` defines its own `Fetch_def`, which shadows the model's when the theory is opened; its `takeTrap_Machine` is not needed, since `takeTrap_fields` covers trap entry to M and to S |
 | I12 | Case analysis of a U-mode step | once, in `Next_U_shape` | `Next_U_frame`, `Next_U_trap` and `Next_U_stays` each read off the four forms |
 | I13 | Translated case | physical forms of (a) and (b) with no hypothesis (`Next_writes_pa`, `fetch_bytes_pmp`); byte forms and (c) with Bare satp | the PMP checks the physical address whatever the translation, and the model never writes a PTE; the PTE reads would have to join the read set of (c) |
+| I14 | Where the trap theorems go | a theory of their own, `riscv_trapTheory`, with `riscv_step` as an ancestor opened qualified only (`riscv_step[qualified]`), and its example in `riscv_trap_exampleTheory` | the exact trap state needs `takeTrap_Machine` (one record update for trap entry to M) and the interrupt lemma `read_mip_eval` (`mip` as a word); putting them in `riscv_isolationTheory` would break I11 for it and every theory above it, and opening `riscv_stepTheory` unqualified would shadow `Fetch_def` |
+| I15 | Form of the ECALL theorem | the four written trap fields of `mcause`, `mepc`, `mtval`, `mstatus` stated, and every other M-level field by one record equation that puts the four back; S-level CSRs, GPRs and memory as whole functions | the consumer needs both the written values and that nothing else changed, including fields that it does not name (`mtvec`, `mscratch`, the PMP CSRs); a whole-state equation would carry the ghost fields (`c_cycles`, `log`, `c_update`) |
+| I16 | Hypotheses on delegation | bit 8 of `medeleg` clear for `Next_U_ecall`; none on `mideleg` for `checkInterrupts_U_MTIP` | an environment call that `medeleg` delegates is a trap into S; for interrupts in U-mode both the M and the S branch of `checkInterrupts` are enabled, so MTIE without MTIP is all that taking no interrupt implies |
+| I17 | Region of a U-mode byte | stated for configurations whose entries are all OFF or NAPOT, by the bit condition H4 on `pmpcfg0` and `pmpcfg2`, and over the words as `pmpCheck_words` reads them | the region of a TOR entry depends on the next lower address word and that of an NA4 entry is not a NAPOT region; the bit condition is the one the step library's M-mode contract states, and a contract fixes the words, not a state |

@@ -9,13 +9,24 @@ CLINT), and leaves the M-mode state alone except as a trap entry changes it. The
 against `Next` itself, so interrupts, exceptions and every instruction of the model are
 covered. `DESIGN.md` has the design, the memory paths of the model and the proof architecture.
 
+`riscv_trapTheory` adds what an M-mode kernel that takes system calls by `ecall` needs to know
+of the step that enters it and of the steps that take no interrupt: a U-mode step that runs
+ECALL is exactly the trap entry into M-mode, with every other CSR, the GPRs and memory
+unchanged, and a U-mode state that takes no interrupt while the timer interrupt is enabled has
+none pending. `riscv_pmpTheory` also says where a byte that U-mode may access lies: in the
+region of the lowest-numbered entry that matches it, which allows the access, and when every
+entry is OFF or NAPOT, in that entry's NAPOT region. `riscv_trapTheory` and its example are the
+only theories here with the step library's `riscv_stepTheory` (`../step`) as an ancestor.
+
 | File | Theory | Contents |
 |---|---|---|
 | `riscv_footprintScript.sml` | `riscv_footprintTheory` | the memory footprint of every function on the way from `Next` to memory (stage 1) |
-| `riscv_pmpScript.sml` | `riscv_pmpTheory` | `pmpCheck` as the first matching entry, byte by byte, by kind, and as a function of the PMP CSR words |
+| `riscv_pmpScript.sml` | `riscv_pmpTheory` | `pmpCheck` as the first matching entry, byte by byte, by kind, and as a function of the PMP CSR words; the entry and the NAPOT region of a byte that U-mode may access |
 | `riscv_framesScript.sml` | `riscv_framesTheory` | for every function reachable from `Next`, the fields of the state it never updates |
 | `riscv_isolationScript.sml` | `riscv_isolationTheory` | the theorems (a)-(d) on `Next` |
 | `riscv_isolation_exampleScript.sml` | `riscv_isolation_exampleTheory` | (a) and (c) on one NAPOT region, and a store inside and outside it |
+| `riscv_trapScript.sml` | `riscv_trapTheory` | the trap entry of a U-mode `ecall` into M-mode, the timer interrupt of a U-mode state that takes no interrupt, the `mcause` and trap-vector words |
+| `riscv_trap_exampleScript.sml` | `riscv_trap_exampleTheory` | an `ecall` in the NAPOT region of the isolation example, and a concrete state that runs one |
 | `DESIGN.md` | | definitions, statements, memory paths of the model, proof architecture, decisions |
 
 ## Building
@@ -24,11 +35,12 @@ covered. `DESIGN.md` has the design, the memory paths of the model and the proof
     Holmake
 
 It uses the heap `../step/riscv-heap` and builds `../model` and `../step` first if needed. From
-clean, with `../step` built, the five theories take about 4 m 40 s (single job: footprint
-2 m 05 s, frames 52 s, pmp 8 s, isolation 1 m 21 s, example 5 s) and at most 2.1 GB of memory
-(peak resident size of the build). No
-`cheat`, axiom or oracle is used: every theorem of the five theories carries only the
-`DISK_THM` tag of a loaded theory, and none of them declares an axiom.
+clean, with `../step` built, the seven theories took 5 m 46 s on a machine shared with other
+builds (single job: footprint 2 m 31 s, frames 56 s, pmp 8 s, isolation 1 m 26 s, example 4 s,
+trap 19 s, trap example 4 s; on an idle machine the first five took about 4 m 40 s) and at most
+1.8 GB of memory (peak resident size of the build). No `cheat`, axiom or oracle is used: every
+theorem of the seven theories carries only the `DISK_THM` tag of a loaded theory, and none of
+them declares an axiom.
 
 ## Sources
 
@@ -165,6 +177,46 @@ FLD).
   and `pmpcfg2` stores `legalize_pmpcfg (v, old)` is by reading `writeCSR`, and the legality
   of the reset value 0 follows from `pmp_legal_bits`; neither is stated as a theorem).
 
+### The entry and the region of a byte that U-mode may access (`riscv_pmpTheory`)
+
+For a 1-byte access by U-mode the check is the permission of the lowest-numbered entry that
+matches the byte, and some entry must match (§3.7.1.3 p.73). An entry is OFF or NAPOT when the
+two bits of its A field are equal (Table 23 p.72); a NAPOT entry matches the region that its
+address word encodes (Table 24 p.72).
+
+- `pmpCheck_User_entry`: if `pmpCheck (x, 1, kind, User) s`, then there are `i < 16` and
+  `lo`, `hi` with `pmpRegion (n2w i) s = SOME (lo, hi)`, `lo <=+ x`, `x <+ hi`, the entry's
+  configuration allows the kind (`pmpPermits (pmpcfg_ent (n2w i) s, kind)`), and no entry
+  `j < i` matches `x` (`pmp_match`). No hypothesis on the configuration: it is
+  `pmpCheck_byte_first` at User privilege, where an unmatched byte is refused and the lock bit
+  plays no part.
+- `pmpRegion_pmpcfg2_off`: with `pmpcfg2 = 0`, entries 8-15 are OFF (`pmpRegion` gives
+  `NONE`), since they are configured by the bytes of `pmpcfg2`. `pmpCheck_User_low`: so with
+  `pmpcfg2 = 0` the entry of `pmpCheck_User_entry` is one of 0-7.
+- `pmp_match_w`, `pmp_match_words`, `pmp_entry_User_byte`, `pmp_check_User_byte`: the same
+  over the words. `pmp_match_w (cfg0, cfg2, addr) i x` holds when `pmp_region (cfg0, cfg2,
+  addr) i = SOME (lo, hi)` with `lo <=+ x` and `x <+ hi`, and `pmp_match_words` relates it to
+  `pmp_match` as `pmpCheck_words` relates the checks. For a 1-byte access by U-mode an entry's
+  verdict is `NONE` if it does not match the byte and the permission of its configuration byte
+  for the kind (`pmp_perm`) if it does (`pmp_entry_User_byte`), so `pmp_check w (x, 1, kind,
+  User)` holds iff some entry `i < 16` matches `x`, no lower entry does, and `pmp_perm` of its
+  byte allows the kind (`pmp_check_User_byte`, an equivalence).
+- `napot_region`, `pmp_region_off_napot`, `off_or_napot_bytes`: `napot_region y` is the pair
+  `(lo, hi)` of the region that a NAPOT entry with address word `y` matches, as `pmp_region`
+  computes it; an entry whose A field is 0 has no region, and one whose A field is 3 has
+  `napot_region (addr i)` (`pmp_region_off_napot`); and the bit condition
+  `(cfg >>> 1 ?? cfg) && 0x0808080808080808w = 0w` on `pmpcfg0` and on `pmpcfg2`, which says
+  that bits 4 and 3 of every byte are equal (the step library's `pmp_off_or_napot`, H4), makes
+  the A field of every entry 0 or 3 (`off_or_napot_bytes`).
+- `pmp_check_User_napot`: if both configuration words satisfy that bit condition and
+  `pmp_check (cfg0, cfg2, addr) (x, 1, kind, User)` holds, then there is an entry `i < 16` whose
+  A field is 3 (NAPOT), whose configuration byte allows the kind (`pmp_perm`), with
+  `FST (napot_region (addr (n2w i))) <=+ x` and `x <+ SND (napot_region (addr (n2w i)))`, and no
+  entry `j < i` matches `x` (`pmp_match_w`). `pmpCheck_User_napot` is the same for a state, over
+  the words as `pmpCheck_words` reads them: `pmpcfg0` and `pmpcfg2` of the hart, and
+  `pmpaddr (n2w i) s` for `addr (n2w i)`. The bit condition is needed because a TOR entry's
+  region also depends on the address word below it and an NA4 region is not `napot_region`.
+
 ### The sanity check (`riscv_isolation_exampleTheory`)
 
 On one PMP region (entry 0 NAPOT, R = W = X = 1, 4 KiB at 0x80000000, entries 1-15 OFF:
@@ -177,18 +229,90 @@ writes the 8 bytes of x6 there and changes no other byte and not the privilege;
 x5 as the trap value, and memory is unchanged. `Fetch_word` is the fetch of a 32-bit
 instruction from two executable parcels.
 
+## Trap entry from U-mode (`riscv_trapTheory`)
+
+What an M-mode kernel that takes system calls by `ecall` needs of the step that enters it, and
+of the steps that take no interrupt.
+
+- `Next_U_ecall`: let `s` be in U-mode (`curPrivilege () s = User`), let its step run ECALL
+  (`step_inst s = SOME (System ECALL)`: no interrupt is taken and the fetched parcels decode
+  to ECALL), and let bit 8 of `medeleg` be clear. Then the step is the trap entry of the
+  environment call from U-mode into M-mode (P §3.3.1 p.60-61, cause 8 of Table 16 p.50):
+  `procID` is unchanged; the privilege of the hart becomes 3; its pc becomes
+  `trapVector (mtvec, F, 8w)`; `mcause` becomes `<| EC := 8w; Int := F |>`, `mepc` the pc of
+  the `ecall` (`PC s`) and `mtval` 0 (P §3.1.14-3.1.16 p.48-53); `mstatus` becomes the old
+  value with MIE cleared, MPIE set to the old MIE and MPP set to 0, U (P §3.1.6.1 p.32);
+  every other field of the hart's M-level CSRs is unchanged (the record of `Next s` with
+  `mcause`, `mepc`, `mtval` and `mstatus` put back is that of `s`); the S-level CSRs, the GPRs
+  and memory are unchanged (as whole functions, all harts); `c_NextFetch` of the hart is
+  `NONE`; and the `exception` field is unchanged.
+  Hypotheses: U-mode, because ECALL raises the environment call of the current privilege and
+  MPP records that privilege (0 also when `c_privilege` holds the reserved 2, which reads as
+  U); `step_inst`, which is what says that the step runs ECALL rather than an interrupt or a
+  fetch fault; bit 8 of `medeleg` clear, because a delegated environment call goes to S-mode
+  and writes `scause`, `sepc` and `stval` instead (P §3.1.8 p.42). There is no hypothesis on
+  `c_NextFetch` (ECALL sets it to the trap, which the step takes and clears), on `satp` or on
+  `MPRV`.
+- `checkInterrupts_U_MTIP`: if `curPrivilege () s = User`, MTIE (bit 7 of `reg'mie mie`) is
+  set and `checkInterrupts () s = NONE`, then `~(mtimecmp s.procID s <=+ mtime () s)`: the
+  timer interrupt, whose pending bit `read_mip` computes from the CLINT (P §3.2.1 p.59, [D67]),
+  is not pending. There is no hypothesis on `mideleg`: in U-mode an interrupt that is pending
+  and enabled in `mie` is taken into M when `mideleg` does not delegate it and into S when it
+  does (P §3.1.9 p.43, §12.1.3 p.117), so either way one would be taken.
+- `Next_U_stays_no_interrupt`: if `s.c_privilege s.procID = 0w` and the step leaves the
+  privilege of the hart unchanged, then `checkInterrupts () s = NONE`: an interrupt is taken
+  into M or S (`checkInterrupts_dest`, `takeTrap_fields`), which changes the privilege to 3 or
+  1.
+- `step_inst_SOME`: a step that runs an instruction (`step_inst s = SOME i`) took no interrupt.
+- `Fetch_exception`, `exec_state_exception`: the spec's `Fetch`, and so the state in which the
+  instruction runs, leave the `exception` field unchanged (a failed fetch returns `F_Error`
+  rather than raising an exception).
+- `curPrivilege_User`: `curPrivilege () s = User` iff the hart's `c_privilege` is 0 or the
+  reserved 2.
+- `reg'mcause_8`: the word of an `mcause` value is 8 iff its exception code is 8 and its
+  interrupt bit is clear (P §3.1.15 Figure 22 p.49).
+- `trapVector_direct`: when bits 1:0 of `mtvec` are 0 (Direct mode) the vector of every trap is
+  `mtvec` itself (P §3.1.7 Table 15 p.41). `trapVector_exception`: the vector of an exception
+  is `mtvec && ~3w` in both modes.
+
+The build of `riscv_trapTheory` checks that `riscv_stepTheory` is not an ancestor of
+`riscv_isolationTheory`, and so of the theories below it (`DESIGN.md` I11); `riscv_trapTheory`
+has it as an ancestor, opened qualified only, for `takeTrap_Machine` and `read_mip_eval`.
+
+### The sanity check of the trap theorems (`riscv_trap_exampleTheory`)
+
+On the configuration `ex_pmp` of `riscv_isolation_exampleTheory`, `ex_ecall_state s` is a
+U-mode state with Bare `satp`, only the timer interrupt enabled (`reg'mie mie = 0x80w`) and not
+pending, `medeleg = 0`, `mtvec` in Direct mode and `ecall` (0x00000073, `ex_ecall_decode`) at
+a 4-aligned pc inside the region. `ex_timer_only`: with only MTIE enabled, a U-mode state takes
+no interrupt iff the timer interrupt is not pending (one direction is `checkInterrupts_U_MTIP`).
+`ex_ecall_step_inst`: the step runs ECALL. `ex_ecall`: it enters M-mode at `mtvec` with
+`mcause` 8 (`reg'mcause_8`), `mepc` the pc, MPP U and MIE clear, and changes neither the GPRs,
+nor memory, nor the PMP configuration. `ex_ecall_state_witness`: a concrete state
+(`ex_ecall_witness`: hart 0 at 0x80000000 with `ecall` there, `mtimecmp` all ones and `mtime`
+0 in the CLINT, `mtvec` = 0x80002000, the other fields left unspecified, `ARB`) satisfies
+`ex_ecall_state`, so the hypotheses of `Next_U_ecall` can hold together;
+`ex_ecall_witness_trap`: its step runs ECALL and enters M-mode at 0x80002000 with `mepc` =
+0x80000000 and `mcause` 8.
+
 ## Hypotheses, and why each is needed
 
 | Hypothesis | Used by | Why |
 |---|---|---|
 | `effectivePrivilege () s = User` (from `mstatus.MPRV = 0` in U-mode, `U_bare_intro`) | (a) U-forms, (c) | explicit loads and stores are checked with the effective privilege (P §3.1.6.4 p.35, [D22]); with MPRV = 1 and MPP = M a U-mode store would be checked as M and pass every unlocked entry. An xRET that leaves M clears MPRV, so it is 0 in a reachable U-mode state. |
-| `curPrivilege () s = User` (from `c_privilege = 0`) | (b), (c), (d) | fetches are checked with the current privilege (P §3.7.1 p.72); it is what makes CSR access, xRET, WFI and SFENCE.VMA illegal and decides which interrupts are enabled. It is weaker than `c_privilege = 0`: the reserved encoding 2 also reads as U. |
+| `curPrivilege () s = User` (from `c_privilege = 0`) | (b), (c), (d), `Next_U_ecall`, `checkInterrupts_U_MTIP` | fetches are checked with the current privilege (P §3.7.1 p.72); it is what makes CSR access, xRET, WFI and SFENCE.VMA illegal and decides which interrupts are enabled; ECALL raises the environment call of the current privilege, and MPP records it. It is weaker than `c_privilege = 0`: the reserved encoding 2 also reads as U. |
 | `satp_bare s` (from `satp.MODE = 0`) | (a), (b), (c) in their U and byte forms | translation is out of scope: the byte forms need the physical address to be the virtual one, and (c) would have to add the page-table entries to the bytes read. Only Sv39, Sv48 and Sv57 turn translation on (P §12.1.11 Table 40 p.126), so this is weaker than MODE = 0. The physical forms `Next_writes_pa` and `fetch_bytes_pmp` and the frames (d) need no hypothesis on `satp`. |
 | `checkInterrupts () s = NONE` | `Next_U_fetch_fault` | a step that takes an interrupt fetches nothing (P §3.1.14 p.49, [D38]). |
 | `D` has no CLINT byte | `Next_U_reads` | the interrupt check reads `mtime`, `mtimecmp` (MTIP, P §3.2.1 p.59) and `msip` (P §3.1.9 p.44) from memory without a PMP check ([D67]), and so does a read of the `time` CSR: two states that differ there can differ in whether a timer interrupt is taken. This is the platform timer, not a PMP leak. |
 | `s.c_NextFetch s.procID = NONE` | (d) | it holds between steps (`Next` resets it in every branch, and `Next_U_frame` proves it again for `Next s`); a stale `SOME Mret` would make `Next` perform an MRET after a U-mode instruction. |
 | `pmp_legal` | `Next_U_reads_unchanged` | with an entry W = 1, R = 0 a byte could be writable but not readable; `legalize_pmpcfg_byte` never stores one ([D49], `legalize_pmpcfg_legal`). |
 | privilege unchanged | `Next_U_stays` | it is what tells a step that does not trap. |
+| `c_privilege = 0` and the privilege unchanged | `Next_U_stays_no_interrupt` | an interrupt changes the privilege only because it is taken from U-mode into M or S; from S-mode an interrupt that `mideleg` delegates is taken into S and keeps the privilege. |
+| `step_inst s = SOME (System ECALL)` | `Next_U_ecall` | it says that the step takes no interrupt and that the fetched instruction is ECALL; an interrupt, a fetch fault or another instruction is another trap or none. |
+| bit 8 of `medeleg` clear | `Next_U_ecall` | an environment call from U-mode that `medeleg` delegates goes to S-mode (P §3.1.8 p.42) and writes `scause`, `sepc`, `stval` and the S-level fields of `mstatus` instead. |
+| MTIE set (bit 7 of `reg'mie mie`) | `checkInterrupts_U_MTIP` | with the timer interrupt disabled a pending timer causes no trap, and taking no interrupt says nothing of MTIP. |
+| every entry OFF or NAPOT (`(cfg >>> 1 ?? cfg) && 0x0808080808080808w = 0w` for `pmpcfg0` and `pmpcfg2`) | `pmp_check_User_napot`, `pmpCheck_User_napot` | a TOR entry's region also depends on the address word below it, and an NA4 region is not `napot_region`; with OFF and NAPOT entries only, the region of every matching entry is the NAPOT region of its own address word. |
+| `pmpcfg2 = 0` | `pmpRegion_pmpcfg2_off`, `pmpCheck_User_low` | entries 8-15 are configured by `pmpcfg2`, so they are then OFF. |
 
 ## Limits
 
@@ -198,6 +322,13 @@ instruction from two executable parcels.
 - The theorems are about the hart `s.procID`; for the other harts of a multi-hart state they
   say only what the whole-function equalities say (of `c_privilege` in `Next_U_trap`, of
   `c_fpr`, `c_UCSR` and `c_ReserveLoad` in `Next_U_frame`, and of memory).
+- The exact trap state is proved only for ECALL from U-mode into M-mode (`Next_U_ecall`); an
+  ECALL that `medeleg` delegates, and every other trap from U-mode, are covered by
+  `Next_U_trap` only. `Next_U_ecall` says nothing of `c_fpr`, `c_UCSR`, `c_ReserveLoad` or the
+  counters.
+- The region of a U-mode byte is given only for configurations whose entries are all OFF or
+  NAPOT (`pmp_check_User_napot`); with TOR or NA4 entries there is only the first matching entry
+  and its `pmpRegion` (`pmpCheck_User_entry`).
 
 ## Stage 1: `riscv_footprintTheory`
 
