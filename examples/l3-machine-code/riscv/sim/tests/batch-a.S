@@ -1,4 +1,4 @@
-/* Batch A regression test for the WP1 fixes of the RISC-V L3 model:
+/* Regression test for the unprivileged audit fixes of the RISC-V L3 model:
    F3 (failed SC clears the reservation), F4 (AMOMIN/MAX[U].W ignore rs2<63:32>),
    F15 (C.ADDIW with rd != x0),
    F20 (DIV/REM/REMU with rd aliasing a source, x/0, MIN/-1).

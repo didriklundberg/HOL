@@ -1,4 +1,4 @@
-/* Sv39 address translation (doc/design-smode.md §3, WP7 stage 2): satp
+/* Sv39 address translation (doc/design-smode.md §3): satp
    writes with reserved MODEs; mstatus.SUM; leaves of 4 KiB, 2 MiB and
    1 GiB; a sign-extended and two non-canonical virtual addresses; each
    page fault of the walk (invalid PTE, W without R, PTE bits 63-54, a

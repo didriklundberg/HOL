@@ -1,4 +1,4 @@
-/* Batch B: rounding mode RMM.  The exact conversions FCVT.D.S, FCVT.D.W and
+/* Rounding mode RMM.  The exact conversions FCVT.D.S, FCVT.D.W and
    FCVT.D.WU accept RMM (static and dynamic) and must agree with sail; the
    last instruction, FADD.S with RMM, is the deferred part of F13: the model
    raises illegal instruction, sail rounds ties away from zero.  The model

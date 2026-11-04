@@ -1,5 +1,5 @@
-/* Sv48 address translation (P §12.5 p.137-138; doc/design-smode.md §3,
-   WP7 stage 2): leaves of 4 KiB, 2 MiB, 1 GiB and 512 GiB, a VA that is
+/* Sv48 address translation (P §12.5 p.137-138; doc/design-smode.md §3):
+   leaves of 4 KiB, 2 MiB, 1 GiB and 512 GiB, a VA that is
    canonical for Sv48 but not for Sv39, a sign-extended VA, non-canonical
    VAs, misaligned 512 GiB, 1 GiB and 2 MiB superpages, invalid PTEs at
    levels 3 and 0, a pointer at level 0, U-mode code, and MPRV.

@@ -1,4 +1,4 @@
-/* Macros for the batch B floating-point ELFs.  Every case leaves its
+/* Macros for the floating-point ELFs.  Every case leaves its
    result in a GPR, reads and clears fflags with fsflags, and stores both
    to the signature region (s11), so that compare.py compares values and
    accrued flags step by step against sail. */

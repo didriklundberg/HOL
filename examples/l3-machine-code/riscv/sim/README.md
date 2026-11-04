@@ -6,8 +6,7 @@ runs it with the model's `Next` function, stops on the HTIF `tohost`
 protocol, and can write a per-step trace. `compare.py` runs the same ELF on
 [sail-riscv](https://github.com/riscv/sail-riscv), normalises sail's trace to
 the same format and reports where the two differ. Together they are the
-oracle check for the rewrite of the model (work package WP0.3 of the RISC-V
-model plan).
+oracle check for the rewrite of the model.
 
 Nothing here is used by the HOL build; `Holmake` does not look in this
 directory.
@@ -67,7 +66,7 @@ wrong; it is a problem of the host toolchain, not of the model. The other
 entry points (comparisons, conversions between integers, single and double,
 round-to-integral) return a scalar or an 8-byte struct and are not affected:
 with the shim, `FP64`, `FP32` and `FPConvert` agree with C's `fenv.h`/libm
-in all four rounding modes, flags included (17,565 cases in WP1 batch A; the
+in all four rounding modes, flags included (17,565 cases; the
 only difference is the sign of the NaN that `mul_sub` propagates).
 
 ### The IntInf.~>> work-around
@@ -403,7 +402,7 @@ the smoke tests and on `rv64uf-p-fadd` from riscv-tests:
 ### Results so far
 
 With sail's default configuration, `int.elf` (217 steps), `rvc.elf` (118
-steps) and `fp_fs.elf` (69 steps) agree. Before the fixes of the WP1 audit
+steps) and `fp_fs.elf` (69 steps) agree. Before the fixes of the unprivileged audit
 (`../doc/audit-unprivileged.md`), `fp_fs.elf` diverged at step 7, where
 `fld` left `mstatus.FS` at Initial (audit F5), and at step 37, `fcvt.l.d`
 with `rtz` of -22.125, where the model set no `fflags.NX` (F11); scratch
@@ -418,7 +417,7 @@ and Sv39, Sv48 and Sv57 (`rv64gc_mu_pmp.json`), the traces of all 134
 `rv64mi-p-csr`, which diverged at step 171 until `fmv.w.x` NaN-boxed its
 result (F7), `rv64ui-p-ma_data` and `rv64mi-p-breakpoint`, which fail on
 both emulators (below), and `rv64si-p-dirty` and `rv64si-p-icache-alias`,
-which need Sv39 and diverged until the model translated addresses (WP7).
+which need Sv39 and diverged until the model translated addresses.
 109 of the 110 `rv64{ui,um,ua,uf,ud,uc}-v-*` tests, which run in U-mode
 under Sv39 with S-mode handling their page faults, pass and agree; the
 other is `rv64ui-v-ma_data` (below). With `mstatus.FS` Off, every F and D
@@ -472,8 +471,8 @@ sail with `SAIL_CONFIG`). The expected signatures are sail's.
 | `fp-conv.S` (rv64imafdc) | every FCVT direction with saturating, boundary and tie inputs, FCVT.S.D/D.S special values, NaN-boxing round trips, `fcsr` reads | exit 0, `fp-conv.sig.expected` | agree with `--ignore-csr fcsr` |
 | `fp-rmm.S` (rv64imafdc) | RMM in the exact conversions FCVT.D.S/D.W/D.WU, which must agree, then `fadd.s` with RMM at label `rmm_fadd` (audit F13, deferred): the model raises illegal instruction, sail rounds | the first trap is illegal instruction at `rmm_fadd`; exit 4 (trap loop at `mtvec` = 0) | the first divergence is the step at `rmm_fadd` |
 | `batch-a.S` (rv64imac) | LR/SC reservation after a failed SC (F3), AMOMIN/MAX[U].W with junk in `rs2<63:32>` (F4), C.ADDIW (F15), DIV/REM/REMU with `rd` aliasing a source, x/0 and MIN/-1 (F20) | exit 0, `batch-a.sig.expected` | agree |
-| `smode.S` (rv64im_zicsr) | S-mode execution (WP7, `../doc/design-smode.md` §2): MRET and SRET into S-mode and U-mode, ECALL from S-mode taken in M-mode and, delegated, in S-mode, the `medeleg`/`mideleg` masks, `sie`/`sip` through `mideleg`, SSIP set by M-mode and taken in S-mode with `stvec` Direct and Vectored, an undelegated SSI in S-mode and a delegated one in U-mode, SRET under TSR, WFI under TW (also with SSIP pending and enabled while SIE is clear), counter enables from S-mode and U-mode, `scause` WLRL, `stval` of an illegal instruction in S-mode, `satp` and SFENCE.VMA under TVM | exit 0, `smode.sig.expected` (100 checks) | agree |
-| `sv39.S` (rv64ima_zicsr, `vm.h`) | Sv39 translation (WP7, `../doc/design-smode.md` §3): `satp` writes with reserved MODEs, `mstatus.SUM` (also through `sstatus`), 4 KiB, 2 MiB and 1 GiB leaves, a sign-extended and two non-canonical VAs, every page fault of the walk (invalid PTE, W without R, PTE bits 63-54, a pointer at level 0, a pointer with D, A or U, misaligned superpages, U and SUM for loads, stores and fetches, MXR, A and D), the PMP on a PTE read and on the final physical address (access faults 1, 5, 7 with the VA as `mtval`), a 32-bit instruction whose upper half is on an unmapped page (`mtval` = pc + 2) or on a page mapped elsewhere, LR/SC through two VAs of one physical address, MPRV with MPP = S and U, page faults delegated to S-mode and, under MPRV, not, Bare in S-mode and `satp` written by S-mode | exit 0, `sv39.sig.expected` (107 checks) | agree, with `--mem-reads` |
+| `smode.S` (rv64im_zicsr) | S-mode execution (`../doc/design-smode.md` §2): MRET and SRET into S-mode and U-mode, ECALL from S-mode taken in M-mode and, delegated, in S-mode, the `medeleg`/`mideleg` masks, `sie`/`sip` through `mideleg`, SSIP set by M-mode and taken in S-mode with `stvec` Direct and Vectored, an undelegated SSI in S-mode and a delegated one in U-mode, SRET under TSR, WFI under TW (also with SSIP pending and enabled while SIE is clear), counter enables from S-mode and U-mode, `scause` WLRL, `stval` of an illegal instruction in S-mode, `satp` and SFENCE.VMA under TVM | exit 0, `smode.sig.expected` (100 checks) | agree |
+| `sv39.S` (rv64ima_zicsr, `vm.h`) | Sv39 translation (`../doc/design-smode.md` §3): `satp` writes with reserved MODEs, `mstatus.SUM` (also through `sstatus`), 4 KiB, 2 MiB and 1 GiB leaves, a sign-extended and two non-canonical VAs, every page fault of the walk (invalid PTE, W without R, PTE bits 63-54, a pointer at level 0, a pointer with D, A or U, misaligned superpages, U and SUM for loads, stores and fetches, MXR, A and D), the PMP on a PTE read and on the final physical address (access faults 1, 5, 7 with the VA as `mtval`), a 32-bit instruction whose upper half is on an unmapped page (`mtval` = pc + 2) or on a page mapped elsewhere, LR/SC through two VAs of one physical address, MPRV with MPP = S and U, page faults delegated to S-mode and, under MPRV, not, Bare in S-mode and `satp` written by S-mode | exit 0, `sv39.sig.expected` (107 checks) | agree, with `--mem-reads` |
 | `sv48.S`, `sv57.S` (rv64ima_zicsr, `vm.h`) | Sv48 and Sv57: leaves at every level (512 GiB, and 256 TiB for Sv57), a VA canonical only for the wider mode, sign-extended and non-canonical VAs, misaligned superpages and invalid PTEs at the upper levels, U-mode code and MPRV | exit 0, `sv48.sig.expected` (24 checks), `sv57.sig.expected` (23 checks) | agree, with `--mem-reads` |
 
 The FP programs set `mstatus.FS` themselves (`ENABLE_FP` in `fpmacros.h`);

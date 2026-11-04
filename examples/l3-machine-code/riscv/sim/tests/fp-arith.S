@@ -1,4 +1,4 @@
-/* Batch B acceptance ELF 1: F/D arithmetic, FMA, FMIN/FMAX, FCLASS and
+/* Floating-point ELF 1: F/D arithmetic, FMA, FMIN/FMAX, FCLASS and
    compares, with NaN, sNaN, infinity, subnormal and tie inputs in all four
    (non-RMM) rounding modes; fflags read and cleared after every case. */
 #include "fpmacros.h"
@@ -75,7 +75,7 @@
         D2(fadd.d, dyn, 0xbff0000000000000, 0xbca0000000000000)  /* RDN via frm */
         fsrmi   1
         S2(fdiv.s, dyn, 0x3f800000, 0x40400000)     /* RTZ via frm */
-        fsrm    zero                                /* not fsrmi 0: CSRRWI zimm=0 is F1 (WP2) */
+        fsrm    zero                                /* not fsrmi 0: CSRRWI zimm=0 is audit F1 */
 
         /* ---- FADD/FSUB/FMUL/FDIV/FSQRT.D ---- */
         D2(fadd.d, rne, 0x3ff0000000000000, 0x4000000000000000)

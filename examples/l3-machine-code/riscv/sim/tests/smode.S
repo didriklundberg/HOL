@@ -1,4 +1,4 @@
-/* S-mode execution (doc/design-smode.md §2, WP7 stage 1): MRET and SRET
+/* S-mode execution (doc/design-smode.md §2): MRET and SRET
    into S-mode and U-mode, ECALL from S-mode taken in M-mode and, delegated,
    in S-mode, medeleg and mideleg, sie and sip through mideleg, SSIP set by
    M-mode and taken in S-mode with stvec Direct and Vectored, SRET under

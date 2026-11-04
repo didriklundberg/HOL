@@ -1,4 +1,4 @@
-/* Batch B acceptance ELF 2: every FCVT direction with saturating, boundary
+/* Floating-point ELF 2: every FCVT direction with saturating, boundary
    and tie inputs in all four (non-RMM) rounding modes, FCVT.S.D/D.S special
    values, NaN-boxing round trips through FLW/FSW/FLD/FSD/FMV/FSGNJ, and fcsr
    reads; fflags read and cleared after every case. */

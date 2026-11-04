@@ -1,5 +1,5 @@
-/* Sv57 address translation (P §12.6 p.138-139; doc/design-smode.md §3,
-   WP7 stage 2): leaves of 4 KiB, 2 MiB, 1 GiB, 512 GiB and 256 TiB, a VA
+/* Sv57 address translation (P §12.6 p.138-139; doc/design-smode.md §3):
+   leaves of 4 KiB, 2 MiB, 1 GiB, 512 GiB and 256 TiB, a VA
    that is canonical for Sv57 but not for Sv48, a sign-extended VA,
    non-canonical VAs, misaligned 256 TiB and 512 GiB superpages, invalid
    PTEs at levels 4 and 3, U-mode code, and MPRV.  Self-checking in the
