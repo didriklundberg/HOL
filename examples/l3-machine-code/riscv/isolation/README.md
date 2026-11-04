@@ -28,7 +28,7 @@ step library's `riscv_stepTheory` as an ancestor.
 
 | File | Theory | Contents |
 |---|---|---|
-| `riscv_footprintScript.sml` | `riscv_footprintTheory` | the memory footprint of every function on the way from `Next` to memory (stage 1) |
+| `riscv_footprintScript.sml` | `riscv_footprintTheory` | the memory footprint of every function on the way from `Next` to memory |
 | `riscv_pmpScript.sml` | `riscv_pmpTheory` | `pmpCheck` as the first matching entry, byte by byte, by kind, and as a function of the PMP CSR words; the entry and the NAPOT region of a byte that U-mode may access |
 | `riscv_framesScript.sml` | `riscv_framesTheory` | for every function reachable from `Next`, the fields of the state it never updates |
 | `riscv_isolationScript.sml` | `riscv_isolationTheory` | the theorems (a)-(d) on `Next` |
@@ -102,8 +102,8 @@ gives it from the register-level conditions that HolBA's contracts state: `c_pri
 
 ### (b) Fetch
 
-`fetch_bytes s x` (stage 1) holds for the bytes of the parcels at the pc and at pc + 2 that
-`fetchAddr` approved; `Fetch_reads` (stage 1) shows that these are the only bytes that the
+`fetch_bytes s x` (`riscv_footprintTheory`) holds for the bytes of the parcels at the pc and at pc + 2 that
+`fetchAddr` approved; `Fetch_reads` (the same theory) shows that these are the only bytes that the
 fetch reads, and `Next_reads` below that the step depends on no other bytes beyond the data
 and the CLINT.
 
@@ -456,7 +456,7 @@ counter CSR, and the build checks that the instance fails for its step theorem.
   of the ghost fields after the step (`Next` has counted the cycle and the instruction,
   `NextRISCV` has not).
 
-## Stage 1: `riscv_footprintTheory`
+## Memory footprint: `riscv_footprintTheory`
 
 **Which functions touch memory.** Of the 253 functions reachable from `Next` that involve the
 state, the build computes the 67 whose definitions mention memory, directly or through a
