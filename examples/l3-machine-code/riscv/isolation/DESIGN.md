@@ -20,6 +20,13 @@ step that takes no interrupt says of the timer (§2 (f)), checked on a concrete 
 `riscv_trap_exampleTheory`. `riscv_trapTheory` is the first theory of the directory with the
 step library's `riscv_stepTheory` as an ancestor (I11, I14).
 
+A third addition relates the spec's `Next` to the step function `NextRISCV` of the step
+library, with which HolBA lifts programs: `riscv_refineTheory` proves that from ghost-equal
+states (equal but for six ghost fields that `NextRISCV` does not maintain) the two steps give
+ghost-equal states, when the step takes no interrupt and its instruction reads no counter CSR
+(§2 (g)); `riscv_refine_exampleTheory` applies this to step theorems of the step library. Both
+have `riscv_stepTheory` as an ancestor (I18).
+
 ## 0. Sources and notation
 
 | Ref | Document |
@@ -118,6 +125,26 @@ An entry is OFF or NAPOT iff bits 4 and 3 of its configuration byte are equal; f
 entries at once this is the bit condition `(cfg >>> 1 ?? cfg) && 0x0808080808080808w = 0w` on
 `pmpcfg0` and on `pmpcfg2`, the hypothesis H4 (`pmp_off_or_napot`) of the step library's
 M-mode contract.
+
+### 1.4 For the refinement of `NextRISCV` (built)
+
+| Name | Definition | Meaning |
+|---|---|---|
+| `ghost_reset s` | `s with <\| log := []; c_update := K ARB; exception := NoException; c_cycles := K 0w; c_instret := K 0w; c_minstret_written := K F \|>` | `s` with the six ghost fields set to fixed values |
+| `ghost_eq s t` | `ghost_reset s = ghost_reset t` | `s` and `t` agree on every field but the ghost fields |
+| `counter_csr c` | `MEM c [0xB00w; 0xB02w; 0xC00w; 0xC02w]` | `mcycle`, `minstret` and their read-only shadows `cycle`, `instret` (P §3.1.10 p.46, §3.1.11 p.47) |
+| `reads_counter i` | `counter_csr c` for `System (CSRRW (rd, rs1, c))` and the five other CSR instructions, `F` for every other instruction | the instruction reads a counter CSR into a register |
+
+The ghost fields are the fields in which the two step functions differ. `Next` sets `log` to
+`[]` (`clear_logs`) and `c_minstret_written` of the hart to `F`, fetches with `setupDelta`, which
+writes the access record `c_update`, counts the instruction in `c_instret` (`incrInstret`, which
+reads `c_minstret_written`) and the cycle in `c_cycles`; `NextRISCV` does none of this, and
+returns `NONE` when `exception` is set, which `Next` never reads. The build computes the six
+from the definitions (the fields that `Next`'s own definition, `clear_logs` and `incrInstret`
+update, those that the spec's `Fetch` updates and the step library's does not, and those that
+`NextRISCV_def` reads) and stops if they change. The instruction itself may write ghost fields
+too (`writeCSR`, `writeFPRS`, `writeFPRD` log in `c_update`; a CSR write of `mcycle` or
+`minstret` writes the counters); it reads one only for a counter CSR (`CSRMap`, checked).
 
 ## 2. The theorems
 
@@ -423,6 +450,76 @@ but `pmpCheck_User_low`, which has in addition the conjunct `!j. j < i ==> ~pmp_
 x` (the deciding entry is the first that matches). Theorems added: `pmp_match_words`,
 `step_inst_SOME`, `curPrivilege_User`, `exec_state_exception`, `trapVector_exception`.
 
+### (g) `Next` and the step library's `NextRISCV` (`riscv_refineTheory`, built)
+
+The step library's theorems are about `NextRISCV`, the M-mode step that HolBA's lifter and
+backlifter use; the theorems above are about `Next`. They agree but for the ghost fields
+(§1.4), as long as the instruction reads no counter CSR:
+
+    Fetch_step_spec:
+      !s w s1. (riscv_step$Fetch s = (w, s1)) /\ (s.exception = NoException) /\
+               (s1.exception = NoException) ==>
+               ?u. riscv$Fetch () s = (F_Result w, s1 with c_update := u)
+
+    Run_ghost:
+      !i s t. ~reads_counter i /\ ghost_eq s t ==> ghost_eq (Run i s) (Run i t)
+
+    Next_NextRISCV_ghost:
+      !s t t'. ghost_eq s t /\ (checkInterrupts () t = NONE) /\
+               (!w t1. (riscv_step$Fetch t = (w, t1)) ==>
+                       ~reads_counter (DecodeAny (haveRVC () t) w)) /\
+               (NextRISCV t = SOME t') ==>
+               ghost_eq (Next s) t'
+
+    Next_ghost:
+      !s t. ghost_eq s t /\ (!i. (step_inst s = SOME i) ==> ~reads_counter i) ==>
+            ghost_eq (Next s) (Next t)
+
+Where the step library's fetch succeeds, the spec's reads the same bits and leaves the same
+state but for its access record; an instruction that reads no counter maps ghost-equal states
+to ghost-equal states; and a `NextRISCV` step from a state that takes no interrupt is, up to the
+ghost fields, the `Next` step of every ghost-equal state. `Next` takes the interrupt that
+`checkInterrupts` finds and `NextRISCV` takes none, hence that hypothesis; `NextRISCV` returns
+`NONE` after a failed fetch (its `Fetch` raises an exception where the spec's returns
+`F_Error`), after an exception, and for SRET.
+
+They rest on one lemma per function reachable from `Next` (`<f>_ghost`, the build checks that
+every function has one but `Delta` and `fetchAndExecute`):
+
+    f x (ghost_reset s) = ghost_reset (f x s)                        (187 functions, generated)
+    ghost_eq s t ==> ghost_eq (f x s) (f x t)   [and equal values]   (the others)
+
+with `~counter_csr c` for the value of a CSR read and for the CSR instructions. A function whose
+only effect on the state is on ghost fields has the stronger `ghost_eq (f x s) s`
+(`write'Delta_ghost`, `clear_logs_ghost`, `incrInstret_ghost`, `raise'exception_ghost`,
+`CSRMap_state`, `cycle_step_ghost`, `next_pre_ghost`). `Run_exception` says that an instruction
+never clears a raised exception, which is what makes `NextRISCV t = SOME t'` exclude a failed
+fetch (`Fetch_step_exception`, `NextRISCV_exception`).
+
+As proved, compared with the statements these theorems were designed with: `ghost_reset_def`,
+`ghost_eq_def`, `counter_csr_def`, `reads_counter_def`, `Fetch_step_spec`, `Run_ghost` and
+`Next_NextRISCV_ghost` are as designed. The generated lemmas commute with `ghost_reset` as a
+whole, one lemma per function, where the design had one commutation with an update of each
+ghost field that the function does not mention; the per-field commutation is proved for
+`exception` alone (for a value other than `NoException`, for `Run` and every function reachable
+from it, locally), which `Run_exception` needs. `CSRMap_ghost` and `CSR_ghost` state the
+ghost-equality of the states for every CSR and the equality of the values for a CSR other than
+a counter (designed: both under `~counter_csr`); `write'CSRMap_ghost`, `write'CSR_ghost` and
+`writeCSR_ghost` hold for every CSR. `Delta`, whose value is the ghost field `c_update`, has no
+lemma; `fetchAndExecute` none of its own (`Next_ghost`, `Next_NextRISCV_ghost` cover it).
+Theorems added: `Next_ghost`, `Run_exception`, `Fetch_spec_step`, `Fetch_step_exception`,
+`NextRISCV_exception`, `NextRISCV_next_post`, `next_post_ghost`, `cycle_step_ghost`,
+`next_pre_ghost`, `exec_state_ghost`, `writeCSR_write'CSRMap`, `CSRMap_state`, and
+`ghost_eq_refl`, `ghost_eq_sym`, `ghost_eq_trans`, `ghost_eq_reset`, `ghost_reset_idem`,
+`ghost_eq_fields`, `ghost_eq_ghost_fupd`.
+
+`riscv_refine_exampleTheory` instantiates `Next_NextRISCV_ghost` on the step library's theorems
+of `csrw pmpcfg0, t0`, `sd x6, 0(x5)`, `c.jr ra`, `beq x0, x0, 8` and `mret`, discharging the
+no-interrupt and fetch hypotheses from those of each step theorem (`checkInterrupts_Machine`,
+`Fetch32`, `Fetch16`, the step library's decoder), so that `<name>_refine` has exactly the step
+theorem's hypotheses; `cycle_read_refused` shows that `csrr a0, cycle` reads a counter, and the
+build checks that the instance fails for it.
+
 ## 3. The memory paths of the model
 
 ### 3.1 How the list is computed and shown exhaustive
@@ -636,6 +733,45 @@ datatype, using the lemmas of layers 1 and 5.
    `highestInterrupt` arguments; `Next_U_stays_no_interrupt` takes the interrupt case of
    `Next_split` (`Next_interrupt`), in which `takeTrap_fields` gives privilege 3 or 1.
 
+### 4.10 The refinement of `NextRISCV`, as built
+
+1. Classification (section 1 of `riscv_refineScript.sml`): two fixpoints over the call graph
+   from `Next`, the ghost fields that a function mentions and the fields that it updates,
+   directly or through a callee; the asserted lists of §2 (g) and §1.4; the cases of `CSRMap`
+   that read the counters, read off its case expression.
+2. The 187 functions that mention no ghost field (generated, as the `<f>_log` pass of
+   `riscv_framesTheory`): rewrite with the definition and the lemmas of the callees, which pull
+   `ghost_reset` out of every call, and with the field and update lemmas of `ghost_reset`; split
+   the remaining cases; `write_pmpaddr` by the cases of its 4-bit index (its catch-all case is
+   `ARB`). `ghost_reset` is a constant, so the simplifier's normalisation of record updates
+   never reorders the six updates.
+3. The functions that mention a ghost field, by hand, in the form
+   `ghost_reset (f x (ghost_reset s)) = ghost_reset (f x s)` or `ghost_reset (f x s) =
+   ghost_reset s`, from which the relational form follows: `CSRMap` and `write'CSRMap` through
+   `literal_case_THM` and the distribution of `FST`, `SND` and `ghost_reset` over the 57 nested
+   conditionals (linear, with no case split); `writeCSR` is `write'CSRMap` up to the ghost
+   fields; `accessCSR` relationally, with the value of `CSRMap` for every CSR other than a
+   counter (also `mip`, which it reads twice); `Fetch` with `Delta_write'Delta` and
+   `write'Delta_write'Delta` of `riscv_footprintTheory`, which collapse the nine records that
+   `setupDelta` writes.
+4. The F and D instructions that write an FPR and `takeTrap` (generated): the same rewriting with
+   the equations of step 3; the CSR instructions from `accessCSR`; `Run` by the cases of the
+   instruction.
+5. `Run_exception`: every function reachable from `Run` commutes with `s with exception := e`
+   for `e <> NoException` (generated, local): `raise'exception` does nothing when an exception
+   is pending, and no other function mentions the field; the CSR maps by the distribution of
+   step 3.
+6. The fetch: `Fetch_step_spec` and `Fetch_spec_step` unfold both fetches with the collapsing
+   lemmas of step 3; `NextRISCV_exception` from `Run_exception` and `Fetch_step_exception`.
+7. The step: `next_post_ghost` by the cases of `NextFetch`, with the relational forms of
+   `write'PC`, `write'NextFetch`, `mret`, `sret`, `takeTrap`, `PC`, `Skip`, `curPrivilege` and
+   `excDest`; `NextRISCV_next_post` unfolds `NextRISCV_def`, whose dispatch is that of
+   `next_post` without `incrInstret`; `Next_NextRISCV_ghost` composes `Next_split` and
+   `fetchAndExecute_next_pre` of `riscv_isolationTheory` with `Fetch_step_spec` at `t`,
+   `Fetch_ghost` from `t` to `s`, `exec_state_ghost`, `Run_ghost`, `next_post_ghost`,
+   `NextRISCV_next_post` and `cycle_step_ghost`, by explicit transitivity steps (`metis_tac`
+   on the chain of ghost-equalities took 3 GB).
+
 ## 5. Decisions
 
 | # | Question | Choice | Reason |
@@ -657,3 +793,9 @@ datatype, using the lemmas of layers 1 and 5.
 | I15 | Form of the ECALL theorem | the four written trap fields of `mcause`, `mepc`, `mtval`, `mstatus` stated, and every other M-level field by one record equation that puts the four back; S-level CSRs, GPRs and memory as whole functions | the consumer needs both the written values and that nothing else changed, including fields that it does not name (`mtvec`, `mscratch`, the PMP CSRs); a whole-state equation would carry the ghost fields (`c_cycles`, `log`, `c_update`) |
 | I16 | Hypotheses on delegation | bit 8 of `medeleg` clear for `Next_U_ecall`; none on `mideleg` for `checkInterrupts_U_MTIP` | an environment call that `medeleg` delegates is a trap into S; for interrupts in U-mode both the M and the S branch of `checkInterrupts` are enabled, so MTIE without MTIP is all that taking no interrupt implies |
 | I17 | Region of a U-mode byte | stated for configurations whose entries are all OFF or NAPOT, by the bit condition H4 on `pmpcfg0` and `pmpcfg2`, and over the words as `pmpCheck_words` reads them | the region of a TOR entry depends on the next lower address word and that of an NA4 entry is not a NAPOT region; the bit condition is the one the step library's M-mode contract states, and a contract fixes the words, not a state |
+| I18 | Where the refinement goes | a theory of its own, `riscv_refineTheory`, with `riscv_step` as an ancestor opened qualified only, and its test in `riscv_refine_exampleTheory` | it is about `NextRISCV`, `Fetch` and `DecodeAny` of the step library; I11 keeps `riscv_isolationTheory` and the theories below it free of `riscv_stepTheory`, and the step library's `Fetch_def` must not shadow the model's |
+| I19 | Form of the ghost lemmas | commutation with `ghost_reset` for the functions that mention no ghost field; the relational form, or "changes only ghost fields", for the others | one lemma per function; the relational form is what composes along `Run` and `Next`, and it is what a function that reads `c_update` or the counters satisfies |
+| I20 | Which fields are ghost | the six of §1.4, computed by the build from `Next`, the two `Fetch` and `NextRISCV`, and asserted | a change of the model by which the two steps differ in another field stops the build |
+| I21 | The exception field | ghost, with `Run_exception` proved by commutation with `exception := e` for `e <> NoException` | the step of `Next` ignores it; `NextRISCV t = SOME t'` must exclude a failed fetch, which needs that no instruction clears a raised exception |
+| I22 | Counter reads | excluded by a hypothesis on the instruction (`reads_counter`, `counter_csr`) | after one step `Next` has counted and `NextRISCV` has not, whatever the counters were before |
+| I23 | The test | instances on step theorems of the step library, with every hypothesis of the lemma discharged from those of the step theorem | it shows that the lemma applies where the step library's theorems do, without new hypotheses |
