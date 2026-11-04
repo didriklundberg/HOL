@@ -987,12 +987,15 @@ Proof
   \\ asm_simp_tac std_ss exception_lemmas
 QED
 
+(* (s with exception := s.exception = s by the component equality, not by the
+   simplifier, whose record package does not do it in every HOL version) *)
 Theorem Run_exception:
   !i s. s.exception <> NoException ==> ((Run i s).exception = s.exception)
 Proof
   rpt strip_tac
+  \\ `s with exception := s.exception = s` by simp [riscv_state_component_equality]
   \\ qspecl_then [`i`, `s`, `s.exception`] mp_tac Run_exception_upd
-  \\ asm_simp_tac (srw_ss()) []
+  \\ asm_rewrite_tac []
   \\ disch_then (mp_tac o AP_TERM ``\x:riscv_state. x.exception``)
   \\ simp_tac (srw_ss()) []
 QED
