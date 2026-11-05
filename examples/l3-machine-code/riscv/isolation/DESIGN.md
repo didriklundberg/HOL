@@ -27,6 +27,18 @@ ghost-equal states, when the step takes no interrupt and its instruction reads n
 (§2 (g)); `riscv_refine_exampleTheory` applies this to step theorems of the step library. Both
 have `riscv_stepTheory` as an ancestor (I18).
 
+A fourth addition is about the machine timer, which this model keeps in memory: `mtime` and
+`mtimecmp` are doublewords of the CLINT that nothing but an instruction writing memory changes.
+`riscv_timerTheory` models the clock of the platform as an environment that writes the bytes of
+`mtime` between steps, defines the tick-point execution (the environment may advance the clock
+after the steps that a condition selects) and the hardware execution (the clock is set before
+every step), gives the exact trap state of the timer interrupt from U-mode, proves that no
+interrupt is taken in M-mode with MIE clear whatever the CLINT holds, and that an M-mode step
+commutes with a change of bytes that it does not read, CLINT bytes included, from which it
+derives the deferral of the clock along steps that read it at most once (§2 (h)).
+`riscv_timer_exampleTheory` evaluates the timer trap of a concrete state. Both have
+`riscv_stepTheory` as an ancestor (I24).
+
 ## 0. Sources and notation
 
 | Ref | Document |
@@ -145,6 +157,25 @@ update, those that the spec's `Fetch` updates and the step library's does not, a
 `NextRISCV_def` reads) and stops if they change. The instruction itself may write ghost fields
 too (`writeCSR`, `writeFPRS`, `writeFPRD` log in `c_update`; a CSR write of `mcycle` or
 `minstret` writes the counters); it reads one only for a counter CSR (`CSRMap`, checked).
+
+### 1.5 For the machine timer (built)
+
+| Name | Definition | Meaning |
+|---|---|---|
+| `mtime_byte x` | `in_range (CLINT_BASE + 0xBFF8w) 8 x` | `x` is a byte of `mtime` (the first disjunct of `clint_byte`) |
+| `set_mtime t s` | `s with MEM8 := (\x. if mtime_byte x then (7 >< 0) (t >>> (8 * w2n (x - (CLINT_BASE + 0xBFF8w)))) else s.MEM8 x)` | the clock sets `mtime` to `t`: byte `i` of `mtime` becomes byte `i` of `t`, little-endian as `mtime ()` reads it |
+| `tptick C mx v pre post` | `if C pre post /\ mtime () post <+ v /\ w2n v < mx then set_mtime v post else post` | after the step from `pre` to `post`, the environment's offer `v` sets the clock if `C` selects the transition, `v` is above `mtime` and below the bound `mx` |
+| `tpexec C mx t s k` | `tpexec C mx t s 0 = s`; `tpexec C mx t s (SUC k) = tptick C mx (t k) (tpexec C mx t s k) (Next (tpexec C mx t s k))` | the tick-point execution: `k` steps of `Next`, step `i` followed by the tick of the offer `t i` |
+| `texec ck s k` | `texec ck s 0 = s`; `texec ck s (SUC k) = Next (set_mtime (ck k) (texec ck s k))` | the hardware execution: the clock `ck` sets `mtime` before every step |
+| `timer_mono ck` | `!k. ck k <=+ ck (SUC k)` | the clock never goes back |
+| `clint_csr c` | `(c = 0xC01w) \/ (c = 0x344w) \/ (c = 0x144w)` | `time`, `mip` and `sip`, the CSRs whose read reads the CLINT |
+| `noclint_inst i s` | `~clint_csr c` for the six CSR instructions on `c`; `curPrivilege () s = Machine` for WFI; `F` for every other instruction | an instruction of `clint_inst` that reads no memory |
+| `kstep_noclock s` | `(curPrivilege () s = Machine) /\ ~mstatus.MIE /\ (effectivePrivilege () s = Machine)`, no byte of `fetch_bytes s` and no byte of the data that `step_inst s` reads is a byte of `mtime`, and `clint_inst i ==> noclint_inst i s` for `step_inst s = SOME i` | an M-mode step that reads no byte of `mtime` |
+
+`tptick` and `tpexec` take the condition and the bound as parameters, so that a kernel's proof
+chooses where the clock may advance (for one, after the steps that leave, enter or stay in
+U-mode, and at the instructions with which the kernel reads the clock) and how far; there is no
+hypothesis on the environment, whose offers the guard filters.
 
 ## 2. The theorems
 
@@ -520,6 +551,131 @@ no-interrupt and fetch hypotheses from those of each step theorem (`checkInterru
 theorem's hypotheses; `cycle_read_refused` shows that `csrr a0, cycle` reads a counter, and the
 build checks that the instance fails for it.
 
+### (h) The machine timer (`riscv_timerTheory`, built)
+
+The clock. `set_mtime` writes the eight bytes that `mtime ()` reads, so
+
+    mtime_set_mtime:           !v s. mtime () (set_mtime v s) = v
+    mtimecmp_set_mtime:        !v s h. mtimecmp h (set_mtime v s) = mtimecmp h s
+    same_except_set_mtime:     !t s. same_except mtime_byte s (set_mtime t s)
+    same_except_set_mtime_eq:  !v s1 s2. same_except mtime_byte s1 s2 ==> (set_mtime v s1 = set_mtime v s2)
+    set_mtime_id:              !v s z. (!x. mtime_byte x ==> (z.MEM8 x = (set_mtime v s).MEM8 x)) ==>
+                                       (set_mtime v z = z)
+
+with `same_except_sym` and `same_except_trans` for `same_except D`. The `mtimecmp` doubleword of
+a hart (`CLINT_BASE + 0x4000 + 8h`, `h` a byte) never overlaps `mtime` (`CLINT_BASE + 0xBFF8`).
+
+The tick-point execution:
+
+    tpexec_shift:    !C mx t s j i. tpexec C mx t s (j + i) = tpexec C mx (\m. t (j + m)) (tpexec C mx t s j) i
+    tpexec_segment:  !C mx t x d. (!i. i + 1 < d ==> ~C (FUNPOW Next i x) (FUNPOW Next (SUC i) x)) ==>
+                                  !i. i < d ==> (tpexec C mx t x i = FUNPOW Next i x)
+    tpexec_stopped:  !C mx s k. tpexec C mx (K 0w) s k = FUNPOW Next k s
+
+with `tptick_same_except` (a tick changes only the bytes of `mtime`), `mtime_tptick` and
+`mtimecmp_tptick`. `tpexec_segment` is how a run of `Next` that some other theorem describes
+(a contract of a kernel, a sequence of step theorems) becomes a segment of the execution: no
+transition strictly inside it may be one that `C` selects.
+
+The timer interrupt. In U-mode an interrupt that is pending, enabled in `mie` and not delegated
+is taken into M-mode whatever `mstatus.MIE` is, the first in the order MEI, MSI, MTI, SEI, SSI,
+STI (P §3.1.9 p.43-45); one that is delegated is taken into S-mode if none is taken into M:
+
+    checkInterrupts_U_timer_pending:
+      !s. (curPrivilege () s = User) /\ word_bit 7 (reg'mie (s.c_MCSR s.procID).mie) /\
+          ~word_bit 7 (s.c_MCSR s.procID).mideleg /\
+          (reg'mie (s.c_MCSR s.procID).mie && 0x808w = 0w) /\
+          (mtimecmp s.procID s <=+ mtime () s) ==>
+          (checkInterrupts () s = SOME (MTI, Machine))
+
+    checkInterrupts_U_timer:
+      !s. (curPrivilege () s = User) /\ word_bit 7 (reg'mie (s.c_MCSR s.procID).mie) /\
+          ~word_bit 7 (s.c_MCSR s.procID).mideleg /\
+          (reg'mie (s.c_MCSR s.procID).mie && 0xA2Aw = 0w) ==>
+          (checkInterrupts () s =
+             if mtimecmp s.procID s <=+ mtime () s then SOME (MTI, Machine) else NONE)
+
+    Next_U_timer:
+      !s. <the hypotheses of checkInterrupts_U_timer_pending> ==>
+          (step_inst s = NONE) /\ ((Next s).procID = s.procID) /\
+          ((Next s).c_privilege s.procID = 3w) /\
+          ((Next s).c_PC s.procID = trapVector ((s.c_MCSR s.procID).mtvec, T, 7w)) /\
+          (((Next s).c_MCSR s.procID).mcause = <| EC := 7w; Int := T |>) /\
+          (((Next s).c_MCSR s.procID).mepc = PC s) /\ (((Next s).c_MCSR s.procID).mtval = 0w) /\
+          (((Next s).c_MCSR s.procID).mstatus =
+             (s.c_MCSR s.procID).mstatus with
+               <| MIE := F; MPIE := (s.c_MCSR s.procID).mstatus.MIE; MPP := 0w |>) /\
+          ((Next s).c_MCSR s.procID with
+             <| mcause := (s.c_MCSR s.procID).mcause; mepc := (s.c_MCSR s.procID).mepc;
+                mtval := (s.c_MCSR s.procID).mtval; mstatus := (s.c_MCSR s.procID).mstatus |> =
+           s.c_MCSR s.procID) /\
+          ((Next s).c_SCSR = s.c_SCSR) /\ ((Next s).c_gpr = s.c_gpr) /\ ((Next s).c_fpr = s.c_fpr) /\
+          ((Next s).MEM8 = s.MEM8) /\ ((Next s).c_ReserveLoad = s.c_ReserveLoad) /\
+          ((Next s).c_NextFetch = s.c_NextFetch) /\ ((Next s).exception = s.exception)
+
+    reg'mcause_timer:     !c. (reg'mcause c = 0x8000000000000007w) <=> (c.EC = 7w) /\ c.Int
+    Next_M_no_interrupt:  !s m. (s.c_privilege s.procID = 3w) /\ ~(s.c_MCSR s.procID).mstatus.MIE ==>
+                                (checkInterrupts () (s with MEM8 := m) = NONE) /\
+                                IS_SOME (step_inst (s with MEM8 := m))
+    dfn'WFI_Machine:      !s. (curPrivilege () s = Machine) ==> (dfn'WFI s = s)
+
+with `read_mip_MTIP` (`read_mip () s && 128w` is `128w` exactly when `mtimecmp <=+ mtime`). The
+hypotheses are on the bits that matter (I27): for a pending timer interrupt to be the one taken,
+MTIE set and not delegated and the two interrupts that come before it, MEI and MSI, disabled;
+for no interrupt to be taken while it is not pending, every other interrupt disabled. With
+`mie` = MTIE and `mideleg` = 0 both hold (`ex_timer_only_checkInterrupts`,
+`ex_timer_only_Next`). The trap state is stated as `Next_U_ecall`'s (I15), with the FPRs and the
+load reservation in addition, which the trap entry keeps ([D45]).
+
+M-mode steps and a change of bytes that they do not read:
+
+    Next_reads_M:
+      !D s1 s2.
+        (curPrivilege () s1 = Machine) /\ ~(s1.c_MCSR s1.procID).mstatus.MIE /\
+        (effectivePrivilege () s1 = Machine) /\ same_except D s1 s2 /\
+        (!x. fetch_bytes s1 x ==> ~D x) /\
+        (!i acc x. (step_inst s1 = SOME i) /\ (mem_access i s1 = SOME acc) /\
+                   (SND (SND acc) <> PMP_Write) /\ data_bytes acc s1 x ==> ~D x) /\
+        (!i. (step_inst s1 = SOME i) /\ clint_inst i /\ ~noclint_inst i s1 ==>
+             !x. clint_byte s1.procID x ==> ~D x) ==>
+        same_except D (Next s1) (Next s2)
+
+`Next_reads` (§2 (c)) needs `D` to miss the CLINT bytes because the interrupt check reads them;
+in M-mode with MIE clear the check gives `NONE` for every memory (`Next_M_no_interrupt`), so
+only the instruction can read the CLINT, and only a CSR instruction on `time`, `mip` or `sip`,
+or WFI outside M-mode, does (`CSRMap_noclint`, `writeCSR_noclint`, `accessCSR_noclint`,
+`dfn'CSRR*_noclint`, `WFI_M_comm`, `Run_noclint`, `Run_reads_M`).
+
+The hardware execution. With `kstep_noclock` (§1.5), `noclock_step` is `Next_reads_M` for the
+bytes of `mtime` after a tick, and
+
+    texec_defer_read:
+      !ck s0 j r d y.
+        (set_mtime (ck (j + r)) (texec ck s0 j) = y) /\ r <= d /\
+        (!i. i <= d /\ i <> r ==> kstep_noclock (FUNPOW Next i y)) /\
+        (!i x. i < r /\ mtime_byte x ==>
+               ((FUNPOW Next (SUC i) y).MEM8 x = (FUNPOW Next i y).MEM8 x)) ==>
+        same_except mtime_byte (texec ck s0 (j + SUC d)) (FUNPOW Next (SUC d) y)
+
+Along `d + 1` steps of which only step `r` may read the clock, and none before it writes
+`mtime`, the hardware execution agrees, but for the bytes of `mtime`, with the run of `Next`
+from the state at index `j` with the clock that step `r` sees; `texec_defer` is the case
+`r = 0`. So a kernel's proof over the tick-point execution, whose ticks it places at the start
+of such segments, carries over to the hardware execution with the tick carrying the clock of
+the segment's read, provided that each segment reads the clock at most once and that
+`kstep_noclock` holds at its other steps.
+
+`riscv_timer_exampleTheory` evaluates, by EVAL from the definitions of the model, the step of a
+concrete U-mode state with the timer interrupt pending (`ex_timer_step`: the trap vector,
+`mcause` 7 with the interrupt bit, `mepc` the pc, GPRs and memory unchanged), derives the same
+from `Next_U_timer` (`ex_timer_hyps`, `ex_timer_trap`), and runs that step in the tick-point
+execution with the stopped clock (`ex_timer_stopped`, `tpexec_stopped`) and with a clock that
+advances after the step out of U-mode (`ex_timer_tick_trap`); `ex_timer_tick` is a tick that
+makes the timer interrupt pending.
+
+Theorems that support these: `timer_mono_le` (a monotone clock is monotone over any interval),
+`noclint_mem_access`, `noclint_inst_priv`, `curPrivilege_Machine`.
+
 ## 3. The memory paths of the model
 
 ### 3.1 How the list is computed and shown exhaustive
@@ -772,6 +928,49 @@ datatype, using the lemmas of layers 1 and 5.
    `NextRISCV_next_post` and `cycle_step_ghost`, by explicit transitivity steps (`metis_tac`
    on the chain of ghost-equalities took 3 GB).
 
+### 4.11 The machine timer, as built
+
+1. The clock: `same_except_set_mtime` and `tptick_same_except` from `same_except_upd`;
+   `same_except_set_mtime_eq` and `set_mtime_id` by record and function extensionality, with no
+   bit-blasting; `mtime_set_mtime` unfolds `mtime` to the eight bytes it reads and bit-blasts
+   their concatenation; `mtimecmp_set_mtime` decides each of the eight address comparisons
+   (`mtimecmp` of hart `h` against the bytes of `mtime`) by bit-blasting.
+2. The tick-point execution: `tpexec_shift` and `tpexec_segment` by induction on the index;
+   `tpexec_stopped` by induction, the strict guard `mtime () post <+ 0w` being false with no
+   bit-blasting (a non-strict guard would need `set_mtime (mtime () s) s = s`).
+3. The timer interrupt: `checkInterrupts_U_timer_pending` and `checkInterrupts_U_timer`
+   unfold `checkInterrupts` with the step library's `read_mip_eval` (`mip` as a word), split the
+   conditionals of `highestInterrupt` for the M and the S branch and bit-blast each case;
+   `Next_U_timer` takes `Next_interrupt` (`Next_split` for an interrupt), the step library's
+   `takeTrap_Machine` (the trap entry into M as one record update), `curPrivilege_User` for MPP,
+   and `cycle_step`'s frame; `Next_M_no_interrupt` is `checkInterrupts_Machine` for the replaced
+   memory.
+4. The commutation: `CSRMap_noclint` by the cases of `CSRMap`, with the `_MEM8` lemmas of
+   `riscv_footprintTheory` for `MCSR`, `read_xepc` and `raise'exception`; `writeCSR_noclint`
+   and `accessCSR_noclint` from it; the six CSR instructions by one generated proof each;
+   `Run_noclint` by the cases of the instruction. `Run_reads_M` splits on `noclint_inst`: an
+   instruction that is one commutes with replacing the memory and writes none
+   (`noclint_mem_access`, `Run_MEM8_frame`), and every other is `Run_reads`. `Next_reads_M`
+   follows `Next_reads` (§4.8, 5) with the interrupt check of both states from
+   `checkInterrupts_Machine` instead of `checkInterrupts_CLINT`.
+5. The hardware execution: `noclock_step` is `Next_reads_M` with `D = mtime_byte`, after
+   `same_except_set_mtime`, `same_except_sym` and `same_except_trans`; `texec_defer` by
+   induction on the length of the segment; `texec_defer_read` by induction on the position `i`
+   in the segment, with three cases: before the read the two executions agree but for `mtime`
+   and the run has not changed `mtime` since its start (`noclock_step`); at the read the clock
+   sets the bytes of `mtime` to those that the run has, so the two states are equal
+   (`same_except_set_mtime_eq`, `set_mtime_id`); after it they agree but for `mtime` again.
+6. The example: EVAL needs the definitions of the model in its compset, which L3's export does
+   not add; outside the heap of `../step`, which HolBA does not build, the update and accessor
+   theorems of the model's records are missing as well. The script adds the definitions of
+   the functions that `Next` reaches (the closure of `Next_def` over the constants of
+   `riscvTheory`: 320 definitions) and the update and accessor theorems of the model's types
+   (`TypeBase.updates_of`, `TypeBase.accessors_of`: 258 theorems), with `computeLib.add_funs`,
+   whose interface is the same in HOL4 `develop` and `trindemossen-2`. It does not add every
+   definition of `riscvTheory`: with `trindemossen-2` they include the constructors of the
+   enumerated types (`User = num2Privilege 0`, ...), with which EVAL did not prove
+   `ex_timer_base_no_interrupt` in ten minutes.
+
 ## 5. Decisions
 
 | # | Question | Choice | Reason |
@@ -799,3 +998,10 @@ datatype, using the lemmas of layers 1 and 5.
 | I21 | The exception field | ghost, with `Run_exception` proved by commutation with `exception := e` for `e <> NoException` | the step of `Next` ignores it; `NextRISCV t = SOME t'` must exclude a failed fetch, which needs that no instruction clears a raised exception |
 | I22 | Counter reads | excluded by a hypothesis on the instruction (`reads_counter`, `counter_csr`) | after one step `Next` has counted and `NextRISCV` has not, whatever the counters were before |
 | I23 | The test | instances on step theorems of the step library, with every hypothesis of the lemma discharged from those of the step theorem | it shows that the lemma applies where the step library's theorems do, without new hypotheses |
+| I24 | Where the timer theorems go | a theory of their own, `riscv_timerTheory`, with `riscv_trap` and `riscv_step` (qualified) as ancestors, and its test in `riscv_timer_exampleTheory` | the timer interrupt needs `takeTrap_Machine`, `read_mip_eval` and `checkInterrupts_Machine` of the step library; I11 keeps `riscv_isolationTheory` and the theories below it free of `riscv_stepTheory` |
+| I25 | The clock | an environment that writes the eight bytes of `mtime` (`set_mtime`, byte by byte), not a change of the model | the model reads `mtime` from memory and never advances it; a bytewise write is what `same_except mtime_byte` and the footprint theorems speak of, and `mtime_set_mtime` relates it to the doubleword |
+| I26 | Where the clock advances | two executions: the tick-point execution, with a condition on the transition (pre- and post-state), a strict guard and a bound, and the hardware execution, with the clock set before every step | the condition on the transition can select a step that leaves U-mode without a test of the pc; the strict guard makes the stopped clock the run of `Next` without bit-blasting; the bound keeps a consumer's arithmetic on the clock from wrapping; the hardware execution is the reference, and `texec_defer_read` relates a segment of it to a run of `Next` |
+| I27 | Hypotheses of the timer interrupt | bits of `mie` and `mideleg`: MTIE set, MTI not delegated, and MEIE and MSIE clear for the pending case (`checkInterrupts_U_timer_pending`, `Next_U_timer`), every other interrupt-enable bit clear for the equation (`checkInterrupts_U_timer`) | the weakest conditions on the two CSRs alone: MEI and MSI come before MTI in priority, the supervisor interrupts after it, and any interrupt other than MTI can be pending while MTIP is clear; `mie` = MTIE and `mideleg` = 0 imply them |
+| I28 | Form of the timer trap | as `Next_U_ecall` (I15), with the FPRs and the load reservation as whole functions, and `step_inst s = NONE` | a kernel that switches processes on the timer needs that the interrupted process's registers and reservation are as it left them, and that it ran no instruction |
+| I29 | Read dependence in M-mode | `Next_reads_M`, with `D` allowed to contain CLINT bytes, for M-mode with MIE clear and the effective privilege M | the interrupt check reads the CLINT but its result does not depend on it there; the effective privilege M puts translation off for the data access |
+| I30 | The deferral | `texec_defer_read`, the read anywhere in the segment, up to the bytes of `mtime` | a tick at the start of a segment may then carry the clock that its read sees, so a segment need not start at its read; the agreement is up to `mtime` because the hardware execution sets it at every step |
