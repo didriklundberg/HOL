@@ -11,6 +11,12 @@
      taken (ex_timer_base_no_interrupt); ex_timer_witness: the same state
      with the clock set to 200 (set_mtime), so that the timer interrupt is
      pending (ex_timer_witness_pending);
+   - ex_ssi_base, ex_ssi_taken: the same state as ex_timer_base but with
+     SSIE also set in mie and SSIP pending: it meets the hypotheses on mie
+     and mideleg of checkInterrupts_U_timer_pending, the timer interrupt is
+     not pending, and the supervisor software interrupt is taken, so the
+     equation of checkInterrupts_U_timer needs SEIE, STIE and SSIE clear as
+     well;
    - ex_timer_step: the step from ex_timer_witness, evaluated by EVAL from
      the definitions of the model: no instruction is run, the privilege
      becomes M, the pc 0x80002000, mcause 7 with the interrupt bit
@@ -178,6 +184,32 @@ QED
 Theorem ex_timer_witness_pending:
   (mtime () ex_timer_witness = 200w) /\ (mtimecmp 0w ex_timer_witness = 100w) /\
   (checkInterrupts () ex_timer_witness = SOME (MTI, Machine))
+Proof
+  rpt conj_tac
+  \\ EVAL_TAC
+QED
+
+(* ex_timer_base with SSIE (bit 1) set in mie besides MTIE and SSIP set in
+   the stored mip *)
+Definition ex_ssi_base_def:
+  ex_ssi_base =
+    ex_timer_base with
+      c_MCSR := K ((ex_timer_base.c_MCSR 0w) with
+                     <| mie := rec'mie 0x82w; mip := rec'mip 0x2w |>)
+End
+
+(* With MTIE set and not delegated and MEIE and MSIE clear, but SSIE set, a
+   pending supervisor software interrupt is taken (into M-mode, as mideleg
+   does not delegate it) while the timer interrupt is not pending: the
+   hypothesis of checkInterrupts_U_timer cannot be weakened to that of
+   checkInterrupts_U_timer_pending *)
+Theorem ex_ssi_taken:
+  (curPrivilege () ex_ssi_base = User) /\
+  word_bit 7 (reg'mie (ex_ssi_base.c_MCSR ex_ssi_base.procID).mie) /\
+  ~word_bit 7 (ex_ssi_base.c_MCSR ex_ssi_base.procID).mideleg /\
+  (reg'mie (ex_ssi_base.c_MCSR ex_ssi_base.procID).mie && 0x808w = 0w) /\
+  ~(mtimecmp ex_ssi_base.procID ex_ssi_base <=+ mtime () ex_ssi_base) /\
+  (checkInterrupts () ex_ssi_base = SOME (SSI, Machine))
 Proof
   rpt conj_tac
   \\ EVAL_TAC

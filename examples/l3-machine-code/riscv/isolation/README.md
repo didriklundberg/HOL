@@ -65,9 +65,9 @@ on a machine shared with other builds (single job: footprint 2 m 08 s, frames 53
 isolation 1 m 22 s, example 4 s, trap 17 s, trap example 4 s, refine 1 m 06 s, refine example
 1 s; on an idle machine the first five took about 4 m 40 s) and at most 2.1 GB of memory (peak
 resident size of the build, reached in footprint; refine took at most 1.3 GB). Built after
-them, one Holmake run each, the timer theory took 27.0 s and the timer example 8.6 s (as
-Holmake reports them; 30 s and 11 s for the runs), with peak resident set sizes of 1.6 GiB and
-0.41 GiB. No `cheat`, axiom or oracle is used: every theorem of the eleven theories carries
+them, one Holmake run each, the timer theory took 27.0 s and the timer example 13.3 s (as
+Holmake reports them; 30 s and 15 s for the runs), with peak resident set sizes of 1.6 GiB and
+0.42 GiB. No `cheat`, axiom or oracle is used: every theorem of the eleven theories carries
 only the `DISK_THM` tag of a loaded theory, and none of them declares an axiom.
 
 ## Sources
@@ -496,7 +496,8 @@ that would not advance the clock or would reach the bound.
   an interrupt is taken exactly when the timer interrupt is pending, and it is taken into M.
   Every other interrupt can be pending in some state (MSIP comes from the CLINT, MEIP from the
   platform, SEIP from the platform or the stored `mip`, SSIP and STIP from the stored `mip`), so
-  each of their enable bits must be clear for no interrupt to be taken while MTIP is clear.
+  each of their enable bits must be clear for no interrupt to be taken while MTIP is clear
+  (`ex_ssi_taken` of the example evaluates such a state with SSIE set).
 - `Next_U_timer`: under the hypotheses of `checkInterrupts_U_timer_pending`, the step is exactly
   the trap entry of the machine timer interrupt into M-mode: it runs no instruction
   (`step_inst s = NONE`; an interrupt is taken before the fetch, P §3.1.14 p.49, [D38]);
@@ -595,6 +596,11 @@ other fields are left unspecified (`ARB`). `ex_timer_witness` is
 - `ex_timer_base_no_interrupt`: `mtime` of `ex_timer_base` is 0, `mtimecmp` of hart 0 is 100,
   and `checkInterrupts` gives `NONE`; `ex_timer_witness_pending`: after the clock has reached 200,
   `mtime` is 200 and `checkInterrupts` gives `SOME (MTI, Machine)`.
+- `ex_ssi_taken`: `ex_ssi_base` is `ex_timer_base` with SSIE set in `mie` besides MTIE and SSIP
+  set in the stored `mip`. It meets the hypotheses on `mie` and `mideleg` of
+  `checkInterrupts_U_timer_pending`, its timer interrupt is not pending, and `checkInterrupts`
+  gives `SOME (SSI, Machine)` (by EVAL): the equation of `checkInterrupts_U_timer` does not hold
+  under those hypotheses, and needs SEIE, STIE and SSIE clear as well.
 - `ex_timer_step`: evaluated by EVAL from the definitions of the model, the step from
   `ex_timer_witness` runs no instruction, enters M-mode at 0x80002000 with `mcause` 7 and its
   interrupt bit (the word 0x8000000000000007), `mepc` = 0x80000000, `mtval` = 0, MPP U and MIE
@@ -638,7 +644,7 @@ other fields are left unspecified (`ARB`). `ex_timer_witness` is
 | `curPrivilege () s = User` | `checkInterrupts_U_timer`, `checkInterrupts_U_timer_pending`, `Next_U_timer` | below M-mode an interrupt into M-mode is enabled whatever `mstatus.MIE` is (P §3.1.9 p.43); in M-mode with MIE clear none is taken; MPP records U. |
 | MTIE set and not delegated (`word_bit 7 (reg'mie mie)`, `~word_bit 7 mideleg`) | `checkInterrupts_U_timer`, `checkInterrupts_U_timer_pending`, `Next_U_timer` | with MTIE clear a pending timer interrupt is not taken; delegated, it is taken into S-mode (P §3.1.8 p.42-43). |
 | MEIE and MSIE clear (`reg'mie mie && 0x808w = 0w`) | `checkInterrupts_U_timer_pending`, `Next_U_timer` | the machine external and software interrupts come before MTI in priority (P §3.1.9 p.45): enabled and pending, one of them would be taken instead. |
-| SEIE, STIE and SSIE clear as well (`reg'mie mie && 0xA2Aw = 0w`) | `checkInterrupts_U_timer` | its `NONE` case: any of these interrupts can be pending while MTIP is clear (SEIP from the platform or the stored `mip`, SSIP and STIP from the stored `mip`), and enabled it would be taken. |
+| SEIE, STIE and SSIE clear as well (`reg'mie mie && 0xA2Aw = 0w`) | `checkInterrupts_U_timer` | its `NONE` case: any of these interrupts can be pending while MTIP is clear (SEIP from the platform or the stored `mip`, SSIP and STIP from the stored `mip`), and enabled it would be taken (`ex_ssi_taken`). |
 | `mtimecmp s.procID s <=+ mtime () s` | `checkInterrupts_U_timer_pending`, `Next_U_timer` | it is MTIP (`read_mip_MTIP`). |
 | `s.c_privilege s.procID = 3w` (or `curPrivilege () s = Machine`) and `mstatus.MIE` clear | `Next_M_no_interrupt`, `Next_reads_M`, `kstep_noclock` | in M-mode an interrupt into M needs MIE and none goes to S-mode (P §3.1.6.1 p.32), so the step takes no interrupt whatever the CLINT holds. |
 | `effectivePrivilege () s1 = Machine` | `Next_reads_M`, `kstep_noclock` | translation off for the data access, so the two states access the same bytes (`dataAddr_off_MEM8`). |

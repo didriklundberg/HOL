@@ -622,7 +622,9 @@ STI (P §3.1.9 p.43-45); one that is delegated is taken into S-mode if none is t
 with `read_mip_MTIP` (`read_mip () s && 128w` is `128w` exactly when `mtimecmp <=+ mtime`). The
 hypotheses are on the bits that matter (I27): for a pending timer interrupt to be the one taken,
 MTIE set and not delegated and the two interrupts that come before it, MEI and MSI, disabled;
-for no interrupt to be taken while it is not pending, every other interrupt disabled. With
+for no interrupt to be taken while it is not pending, every other interrupt disabled
+(`ex_ssi_taken` evaluates a state that meets the first hypotheses, with SSIE set, from which the
+supervisor software interrupt is taken while the timer interrupt is not pending). With
 `mie` = MTIE and `mideleg` = 0 both hold (`ex_timer_only_checkInterrupts`,
 `ex_timer_only_Next`). The trap state is stated as `Next_U_ecall`'s (I15), with the FPRs and the
 load reservation in addition, which the trap entry keeps ([D45]).
@@ -671,7 +673,8 @@ concrete U-mode state with the timer interrupt pending (`ex_timer_step`: the tra
 from `Next_U_timer` (`ex_timer_hyps`, `ex_timer_trap`), and runs that step in the tick-point
 execution with the stopped clock (`ex_timer_stopped`, `tpexec_stopped`) and with a clock that
 advances after the step out of U-mode (`ex_timer_tick_trap`); `ex_timer_tick` is a tick that
-makes the timer interrupt pending.
+makes the timer interrupt pending, and `ex_ssi_taken` the state that shows the need for the
+hypothesis of `checkInterrupts_U_timer`.
 
 Theorems that support these: `timer_mono_le` (a monotone clock is monotone over any interval),
 `noclint_mem_access`, `noclint_inst_priv`, `curPrivilege_Machine`.
@@ -1001,7 +1004,7 @@ datatype, using the lemmas of layers 1 and 5.
 | I24 | Where the timer theorems go | a theory of their own, `riscv_timerTheory`, with `riscv_trap` and `riscv_step` (qualified) as ancestors, and its test in `riscv_timer_exampleTheory` | the timer interrupt needs `takeTrap_Machine`, `read_mip_eval` and `checkInterrupts_Machine` of the step library; I11 keeps `riscv_isolationTheory` and the theories below it free of `riscv_stepTheory` |
 | I25 | The clock | an environment that writes the eight bytes of `mtime` (`set_mtime`, byte by byte), not a change of the model | the model reads `mtime` from memory and never advances it; a bytewise write is what `same_except mtime_byte` and the footprint theorems speak of, and `mtime_set_mtime` relates it to the doubleword |
 | I26 | Where the clock advances | two executions: the tick-point execution, with a condition on the transition (pre- and post-state), a strict guard and a bound, and the hardware execution, with the clock set before every step | the condition on the transition can select a step that leaves U-mode without a test of the pc; the strict guard makes the stopped clock the run of `Next` without bit-blasting; the bound keeps a consumer's arithmetic on the clock from wrapping; the hardware execution is the reference, and `texec_defer_read` relates a segment of it to a run of `Next` |
-| I27 | Hypotheses of the timer interrupt | bits of `mie` and `mideleg`: MTIE set, MTI not delegated, and MEIE and MSIE clear for the pending case (`checkInterrupts_U_timer_pending`, `Next_U_timer`), every other interrupt-enable bit clear for the equation (`checkInterrupts_U_timer`) | the weakest conditions on the two CSRs alone: MEI and MSI come before MTI in priority, the supervisor interrupts after it, and any interrupt other than MTI can be pending while MTIP is clear; `mie` = MTIE and `mideleg` = 0 imply them |
+| I27 | Hypotheses of the timer interrupt | bits of `mie` and `mideleg`: MTIE set, MTI not delegated, and MEIE and MSIE clear for the pending case (`checkInterrupts_U_timer_pending`, `Next_U_timer`), every other interrupt-enable bit clear for the equation (`checkInterrupts_U_timer`) | the weakest conditions on the two CSRs alone: MEI and MSI come before MTI in priority, the supervisor interrupts after it, and any interrupt other than MTI can be pending while MTIP is clear (`ex_ssi_taken`); `mie` = MTIE and `mideleg` = 0 imply them |
 | I28 | Form of the timer trap | as `Next_U_ecall` (I15), with the FPRs and the load reservation as whole functions, and `step_inst s = NONE` | a kernel that switches processes on the timer needs that the interrupted process's registers and reservation are as it left them, and that it ran no instruction |
 | I29 | Read dependence in M-mode | `Next_reads_M`, with `D` allowed to contain CLINT bytes, for M-mode with MIE clear and the effective privilege M | the interrupt check reads the CLINT but its result does not depend on it there; the effective privilege M puts translation off for the data access |
 | I30 | The deferral | `texec_defer_read`, the read anywhere in the segment, up to the bytes of `mtime` | a tick at the start of a segment may then carry the clock that its read sees, so a segment need not start at its read; the agreement is up to `mtime` because the hardware execution sets it at every step |
