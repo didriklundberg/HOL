@@ -487,8 +487,9 @@ that would not advance the clock or would reach the bound.
   (`mtimecmp s.procID s <=+ mtime () s`), then `checkInterrupts () s = SOME (MTI, Machine)`. In
   U-mode every interrupt that is pending, enabled in `mie` and not delegated in `mideleg` may be
   taken into M-mode, whatever `mstatus.MIE` is, and of these the first in the order MEI, MSI,
-  MTI, SEI, SSI, STI is taken (P §3.1.9 p.43-45): so MEIE and MSIE must be clear, and the
-  supervisor interrupts, which come after MTI, need no hypothesis.
+  MTI, SEI, SSI, STI is taken (P §3.1.9 p.43-45): so MEI and MSI, which come before MTI, must
+  not be enabled and undelegated (the theorem has them disabled; delegated would also do), and
+  the supervisor interrupts, which come after MTI, need no hypothesis.
 - `checkInterrupts_U_timer`: if `curPrivilege () s = User`, MTIE is set and not delegated, and
   the other five interrupt-enable bits of `mie` (MEIE, SEIE, STIE, MSIE and SSIE:
   `reg'mie mie && 0xA2Aw = 0w`) are clear, then
@@ -643,7 +644,7 @@ other fields are left unspecified (`ARB`). `ex_timer_witness` is
 | `NextRISCV t = SOME t'` | `Next_NextRISCV_ghost` | `NextRISCV` is `NONE` after a failed fetch, an exception raised by the instruction, and for SRET, where the two steps are not related. |
 | `curPrivilege () s = User` | `checkInterrupts_U_timer`, `checkInterrupts_U_timer_pending`, `Next_U_timer` | below M-mode an interrupt into M-mode is enabled whatever `mstatus.MIE` is (P §3.1.9 p.43); in M-mode with MIE clear none is taken; MPP records U. |
 | MTIE set and not delegated (`word_bit 7 (reg'mie mie)`, `~word_bit 7 mideleg`) | `checkInterrupts_U_timer`, `checkInterrupts_U_timer_pending`, `Next_U_timer` | with MTIE clear a pending timer interrupt is not taken; delegated, it is taken into S-mode (P §3.1.8 p.42-43). |
-| MEIE and MSIE clear (`reg'mie mie && 0x808w = 0w`) | `checkInterrupts_U_timer_pending`, `Next_U_timer` | the machine external and software interrupts come before MTI in priority (P §3.1.9 p.45): enabled and pending, one of them would be taken instead. |
+| MEIE and MSIE clear (`reg'mie mie && 0x808w = 0w`) | `checkInterrupts_U_timer_pending`, `Next_U_timer` | the machine external and software interrupts come before MTI in priority (P §3.1.9 p.45): enabled, not delegated and pending, one of them would be taken instead (delegated, it would not be, as an interrupt into M has priority over one into S; the theorems ask for the simpler condition). |
 | SEIE, STIE and SSIE clear as well (`reg'mie mie && 0xA2Aw = 0w`) | `checkInterrupts_U_timer` | its `NONE` case: any of these interrupts can be pending while MTIP is clear (SEIP from the platform or the stored `mip`, SSIP and STIP from the stored `mip`), and enabled it would be taken (`ex_ssi_taken`). |
 | `mtimecmp s.procID s <=+ mtime () s` | `checkInterrupts_U_timer_pending`, `Next_U_timer` | it is MTIP (`read_mip_MTIP`). |
 | `s.c_privilege s.procID = 3w` (or `curPrivilege () s = Machine`) and `mstatus.MIE` clear | `Next_M_no_interrupt`, `Next_reads_M`, `kstep_noclock` | in M-mode an interrupt into M needs MIE and none goes to S-mode (P §3.1.6.1 p.32), so the step takes no interrupt whatever the CLINT holds. |
